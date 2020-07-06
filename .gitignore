@@ -1,0 +1,7 @@
+logs
+experiments
+**/*.pyc
+**/__pycache__/
+*_graphs.txt
+.idea/
+interpolation/icews14/
