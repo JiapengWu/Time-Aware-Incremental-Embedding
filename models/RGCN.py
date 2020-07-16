@@ -96,8 +96,6 @@ class RGCNLayer(nn.Module):
 class RGCN(nn.Module):
     def __init__(self, args, hidden_size, embed_size, num_rels, total_times):
         super(RGCN, self).__init__()
-        # self.use_time_embedding = args.use_time_embedding
-        self.use_time_embedding = True
         self.layer_1 = RGCNLayer(args, embed_size, hidden_size, 2 * num_rels, args.n_bases,
                    total_times, activation=None, self_loop=True, dropout=args.dropout)
         self.layer_2 = RGCNLayer(args, hidden_size, hidden_size, 2 * num_rels, args.n_bases,
@@ -106,11 +104,10 @@ class RGCN(nn.Module):
     def forward(self, batched_graph, time):
         first_batch_graph, first_time_embedding = self.layer_1(batched_graph, time)
         second_batch_graph, second_time_embedding = self.layer_2(first_batch_graph, time)
-        if self.use_time_embedding:
-            second_batch_graph.ndata['h'] = second_batch_graph.ndata['h'] + second_time_embedding
+        second_batch_graph.ndata['h'] = second_batch_graph.ndata['h'] + second_time_embedding
         return second_batch_graph
 
     def forward_isolated(self, ent_embeds, time):
         first_ent_embeds, first_time_embedding = self.layer_1.forward_isolated(ent_embeds, time)
         second_ent_embeds, second_time_embedding = self.layer_2.forward_isolated(first_ent_embeds, time)
-        return second_ent_embeds + second_time_embedding if self.use_time_embedding else second_ent_embeds
+        return second_ent_embeds + second_time_embedding

@@ -1,10 +1,10 @@
 from models.RGCN import RGCN
 import dgl
 import numpy as np
-from utils.utils import comp_deg_norm, move_dgl_to_cuda
+from utils.utils import move_dgl_to_cuda
 from utils.scores import *
 from models.TKG_Module import TKG_Module
-from utils.utils import cuda, node_norm_to_edge_norm
+from utils.utils import build_sampled_graph_from_triples
 
 
 class StaticRGCN(TKG_Module):
@@ -23,19 +23,20 @@ class StaticRGCN(TKG_Module):
             self.eval_all_embeds_g = self.get_all_embeds_Gt(self.eval_ent_embed)
 
         if triples.shape[0] == 0:
-            return cuda(torch.tensor([]).long(), self.args.n_gpu) if self.use_cuda else torch.tensor([]).long(), 0
+            return self.cuda(torch.tensor([]).long(), self.args.n_gpu) if self.use_cuda else torch.tensor([]).long(), 0
 
         id_dict = self.train_graph.ids
         rank = self.evaluater.calc_metrics_single_graph(self.eval_ent_embed, self.rel_embeds, self.eval_all_embeds_g, triples, id_dict, self.time)
-        # loss = self.link_classification_loss(self.eval_ent_embed, self.rel_embeds, triples, label)
         return rank
 
-    def forward(self, triples):
-        ent_embed = self.get_graph_ent_embeds(triples)
+    def forward(self, quadruples):
+        # import pdb; pdb.set_trace()
+        ent_embed = self.get_graph_ent_embeds(quadruples[:, :-1])
         all_embeds_g = self.get_all_embeds_Gt(ent_embed)
-        neg_tail_samples, neg_head_samples, labels = self.corrupter.single_graph_negative_sampling(triples.cpu(), self.time, self.train_graph, self.num_ents)
-        loss_tail = self.train_link_prediction(ent_embed, triples, neg_tail_samples, labels, all_embeds_g, corrupt_tail=True)
-        loss_head = self.train_link_prediction(ent_embed, triples, neg_head_samples, labels, all_embeds_g, corrupt_tail=False)
+        neg_tail_samples, neg_head_samples, labels = \
+            self.corrupter.negative_sampling(quadruples.cpu(), self.train_graph, self.num_ents)
+        loss_tail = self.train_link_prediction(ent_embed, quadruples, neg_tail_samples, labels, all_embeds_g, corrupt_tail=True)
+        loss_head = self.train_link_prediction(ent_embed, quadruples, neg_head_samples, labels, all_embeds_g, corrupt_tail=False)
         return loss_tail + loss_head
 
     def get_all_embeds_Gt(self, convoluted_embeds):
@@ -45,36 +46,8 @@ class StaticRGCN(TKG_Module):
         all_embeds_g[values] = convoluted_embeds[keys]
         return all_embeds_g
 
-    # '''
-    def build_graph_from_triples(self, triples):
-        sample_idx = np.random.choice(np.arange(len(triples)), size=int(0.5 * len(triples)), replace=False)
-        src, rel, dst = triples[sample_idx].transpose(0, 1)
-        g = dgl.DGLGraph()
-        g.add_nodes(len(self.train_graph.nodes))
-        g.add_edges(src, dst)
-        node_norm = comp_deg_norm(g)
-        g.ndata.update({'id': self.train_graph.ndata['id'], 'norm': torch.from_numpy(node_norm).view(-1, 1)})
-        g.edata['norm'] = node_norm_to_edge_norm(g, torch.from_numpy(node_norm).view(-1, 1))
-        g.edata['type_s'] = rel
-        g.ids = self.train_graph.ids
-        return g
-
-    '''
-    def build_graph_from_triples(self, triples):
-        g = self.train_graph
-        src, rel, dst = g.edges()[0], g.edata['type_s'], g.edges()[1]
-        total_idx = np.random.choice(np.arange(src.shape[0]), size=int(0.5 * src.shape[0]), replace=False)
-        sg = g.edge_subgraph(total_idx, preserve_nodes=True)
-        node_norm = comp_deg_norm(sg)
-        sg.ndata.update({'id': g.ndata['id'], 'norm': torch.from_numpy(node_norm).view(-1, 1)})
-        sg.edata['norm'] = node_norm_to_edge_norm(sg, torch.from_numpy(node_norm).view(-1, 1))
-        sg.edata['type_s'] = rel[total_idx]
-        sg.ids = g.ids
-        return sg
-    #'''
-
     def get_graph_ent_embeds(self, triples, val=False):
-        g = self.train_graph if val else self.build_graph_from_triples(triples)
+        g = self.train_graph if val else build_sampled_graph_from_triples(triples, self.train_graph)
         # g = self.train_graph
         g.ndata['h'] = self.ent_embeds[g.ndata['id']].view(-1, self.embed_size)
         if self.use_cuda:
