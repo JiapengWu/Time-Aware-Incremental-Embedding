@@ -12,3 +12,6 @@ class Static(TKG_Embedding):
 
     def get_graph_ent_embeds(self):
         return self.ent_embeds[self.train_graph.ndata['id']].view(-1, self.embed_size)
+
+    def forward_full_batch(self, quadruples, neg_tail_samples, neg_head_samples, labels):
+        return self.forward_incremental(quadruples, neg_tail_samples, neg_head_samples, labels)

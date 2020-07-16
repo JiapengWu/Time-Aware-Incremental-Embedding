@@ -80,7 +80,7 @@ def get_big_graph(data, num_rels):
         g.add_edges(src, dst)
         norm = comp_deg_norm(g)
         # import pdb; pdb.set_trace()
-        g.ndata.update({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': torch.from_numpy(norm).view(-1, 1)})
+        g.ndata.update_eval_metrics({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': torch.from_numpy(norm).view(-1, 1)})
         g.edata['type_s'] = torch.LongTensor(rel_s)
         g.edata['type_o'] = torch.LongTensor(rel_o)
         g.ids = {}
@@ -100,7 +100,7 @@ def get_big_graph(data, num_rels):
         g.add_nodes(len(uniq_v))
         g.add_edges(src, dst)
         norm = comp_deg_norm(g)
-        g.ndata.update({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': torch.from_numpy(norm).view(-1, 1)})
+        g.ndata.update_eval_metrics({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': torch.from_numpy(norm).view(-1, 1)})
         g.edata['type_s'] = torch.LongTensor(rel)
         g.ids = {}
         in_graph_idx = 0
@@ -155,7 +155,7 @@ def get_train_val_test_graph_at_t(triples, num_rels):
         rel_o = np.concatenate((rel_train + num_rels, rel_train))
         rel_s = np.concatenate((rel_train, rel_train + num_rels))
 
-        g_train.ndata.update({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': norm.view(-1, 1)})
+        g_train.ndata.update_eval_metrics({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': norm.view(-1, 1)})
         g_train.edata['type_s'] = torch.LongTensor(rel_s)
         g_train.edata['type_o'] = torch.LongTensor(rel_o)
         g_train.ids = {}
@@ -175,7 +175,7 @@ def get_train_val_test_graph_at_t(triples, num_rels):
         graph.add_nodes(len(uniq_v))
         graph.add_edges(cur_src, cur_dst)
         node_norm = comp_deg_norm(graph)
-        graph.ndata.update({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': torch.from_numpy(node_norm).view(-1, 1)})
+        graph.ndata.update_eval_metrics({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': torch.from_numpy(node_norm).view(-1, 1)})
         # import pdb; pdb.set_trace()
         graph.edata['norm'] = node_norm_to_edge_norm(graph, torch.from_numpy(node_norm).view(-1, 1))
         graph.edata['type_s'] = torch.LongTensor(cur_rel)
@@ -279,30 +279,38 @@ def id2entrel(dataset_path, num_rels):
     return id2ent, id2rel
 
 
-class TimeDataset(Dataset):
-    def __init__(self, graph):
+class FullBatchDataset(Dataset):
+    def __init__(self, graph_dict, time, train_seq_length):
+        self.init_multi_time_step(graph_dict, time, train_seq_length) \
+            if train_seq_length > 0 else self.init_single_time_step(graph_dict, time)
+
+    def init_multi_time_step(self, graph_dict, time, train_seq_length):
+        graphs = [graph_dict[i] for i in range(max(time - train_seq_length, 0), time + 1)]
+        times = list(range(max(time - train_seq_length, 0), time + 1))
+        full_triples = []
+        for graph, t in zip(graphs, times):
+            quadruples = self.get_quadruples(graph, t)
+            full_triples.append(quadruples)
+        self.quadruples = torch.cat(full_triples)
+
+    def init_single_time_step(self, graph_dict, time):
+        graph = graph_dict[time]
+        self.quadruples = self.get_quadruples(graph, time)
+
+    def get_quadruples(self, graph, time):
         try:
-            self.triples = torch.stack([graph.edges()[0], graph.edata['type_s'], graph.edges()[1]]).transpose(0, 1)
+            return torch.stack([graph.edges()[0], graph.edata['type_s'], graph.edges()[1],
+                                      torch.ones(len(graph.edges()[0]), dtype=int) * time]).transpose(0, 1)
         except:
-            self.triples = torch.stack([graph.edges()[0], graph.edata['type_s'].cpu(), graph.edges()[1]]).transpose(0, 1)
-            # import pdb; pdb.set_trace()
+            return torch.stack([graph.edges()[0], graph.edata['type_s'], graph.edges()[1],
+                                      torch.ones(len(graph.edges()[0]), dtype=int) * time]).transpose(0, 1)
+
     def __getitem__(self, index):
-        return self.triples[index]
+        return self.quadruples[index]
 
     def __len__(self):
-        return len(self.triples)
+        return len(self.quadruples)
 
-
-'''
-class FullBatchDataset(TimeDataset):
-    def __init__(self, graph_dict, time, train_seq_length):
-        graphs = [graph_dict[max(time - i, 0)] for i in range(train_seq_length)][::-1]
-        full_triples = []
-        for graph in graphs:
-            triples = torch.stack([graph.edges()[0], graph.edata['type_s'], graph.edges()[1]]).transpose(0, 1)
-            full_triples.append(triples)
-        self.triples = torch.cat(full_triples)
-'''
 
 if __name__ == '__main__':
     args = process_args()

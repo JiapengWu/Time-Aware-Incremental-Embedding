@@ -16,17 +16,41 @@ import torch
 import sys
 import glob
 
-
 if __name__ == '__main__':
     args = process_args()
     torch.manual_seed(args.seed)
 
     if args.config:
         args_json = json.load(open(args.config))
-        args.__dict__.update(dict(args_json))
+        args.__dict__.update_eval_metrics(dict(args_json))
 
     use_cuda = args.use_cuda = len(args.n_gpu) >= 0 and torch.cuda.is_available() and not args.cpu
     args.n_gpu = 0 if args.cpu else args.n_gpu
+    name = "{}-{}-{}-{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1], args.score_function,
+                                        args.train_seq_len,
+                                        "-multi-step" if args.multi_step else "",
+                                        "-addition" if args.addition else "",
+                                        "-debug" if args.debug else "",
+                                        "-overfit" if args.overfit else "")
+
+    version = time.strftime('%Y%m%d%H%M')
+    log_file_out = "logs/log-{}-{}".format(name, version)
+    log_file_err = "errs/log-{}-{}".format(name, version)
+
+    if not args.debug:
+        sys.stdout = open(log_file_out, 'w')
+        sys.stderr = open(log_file_err, 'w')
+
+    tt_logger = MyTestTubeLogger(
+        save_dir="experiments",
+        name=name,
+        debug=False,
+        version=version,
+        create_git_tag=True
+    )
+
+    args.base_path = tt_logger.experiment.get_data_path(tt_logger.experiment.name, tt_logger.experiment.version)
+
     num_ents, num_rels = get_total_number(args.dataset, 'stat.txt')
 
     graph_dict_train, graph_dict_val, graph_dict_test = build_interpolation_graphs(args)
@@ -40,38 +64,22 @@ if __name__ == '__main__':
               "SRGCN": StaticRGCN
               }[args.module]
 
-    name = "{}-{}-{}-{}".format(args.module, args.dataset.split('/')[-1], args.score_function,
-                                  args.train_seq_len)
-    version = time.strftime('%Y%m%d%H%M')
-    log_file = "logs/log-{}-{}".format(name, version)
-
-    tt_logger = MyTestTubeLogger(
-        save_dir="experiments",
-        name=name,
-        debug=False,
-        version=version,
-        create_git_tag=True
-    )
-
-    args.base_path = tt_logger.experiment.get_data_path(tt_logger.experiment.name, tt_logger.experiment.version)
+    print("Model checkpoint path: {}".format(args.base_path))
+    print(args)
 
     if not args.debug:
-        sys.stdout = open(log_file, 'w')
-        sys.stderr = open(log_file, 'w')
+        tt_logger.log_hyperparams(args)
+        tt_logger.save()
 
     model = module(args, num_ents, num_rels, graph_dict_train, graph_dict_val, graph_dict_test)
-    if args.resume:
-        assert args.model_name, args.version
-        tt_logger = MyTestTubeLogger(
-            save_dir='experiments',
-            name=args.model_name,
-            debug=False,
-            version=args.version  # An existing version with a saved checkpoint
-        )
+    if args.load_base_model:
+        base_model_path = glob.glob(os.path.join(args.base_model_path, "*.ckpt"))[0]
+        base_model_checkpoint = torch.load(base_model_path, map_location=lambda storage, loc: storage)
+        # import pdb; pdb.set_trace()
+        model.load_state_dict(base_model_checkpoint['state_dict'], strict=False)
 
-    accumulative_test_result = {"mrr": 0, "hit_1": 0, "hit_3": 0, "hit_10": 0}
-
-    for time in total_time:
+    end_time_step = min(len(total_time), args.end_time_step + 1)
+    for time in range(args.start_time_step, end_time_step):
         early_stop_callback = EarlyStopping(
             monitor='hit_10',
             min_delta=0.00,
@@ -89,9 +97,6 @@ if __name__ == '__main__':
             prefix=''
         )
 
-        tt_logger.log_hyperparams(args)
-        tt_logger.save()
-
         trainer = Trainer(logger=tt_logger, gpus=args.n_gpu,
                           gradient_clip_val=args.gradient_clip_val,
                           max_epochs=args.max_nb_epochs,
@@ -105,16 +110,8 @@ if __name__ == '__main__':
                           show_progress_bar=True,
                           checkpoint_callback=checkpoint_callback)
 
-        model.reset_time(time)
+        model.on_time_step_start(time)
         trainer.fit(model)
         trainer.use_ddp = False
-        # model.test_dataloader = model.val_dataloader
-        load_path = glob.glob(os.path.join(os.path.join(args.base_path, "snapshot-{}").format(time), "*.ckpt"))[0]
-        # print(load_path)
-        checkpoint = torch.load(load_path, map_location=lambda storage, loc: storage)
-        model.load_state_dict(checkpoint['state_dict'])
-
         test_res = trainer.test(model=model)
-        print("Accumulative results:")
-        for i in "mrr", "hit_1", "hit_3", "hit_10":
-            print("{}: {}".format(i, model.accumulative_val_result[i]))
+        model.on_time_step_end()
