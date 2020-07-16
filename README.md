@@ -29,4 +29,3 @@ python main.py --module SRGCN -d wiki --n-gpu 0 --score-function complex --negat
    `--debug`: instead of redirecting the logs to a log file, print them on stdout.
    
    `--fast`: both training and valication in each epoch are only performed on one batch. Fast sanity check for training and validation.  
-   
