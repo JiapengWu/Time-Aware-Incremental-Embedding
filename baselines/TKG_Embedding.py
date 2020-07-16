@@ -21,15 +21,15 @@ class TKG_Embedding(TKG_Module):
             self.reduced_entity_embedding = self.eval_all_embeds_g[self.known_entities]
         id_dict = self.train_graph.ids
         rank = self.evaluater.calc_metrics_single_graph(self.eval_ent_embed,
-                                                        self.rel_embeds, self.eval_all_embeds_g, triples, id_dict, self.time)
+                        self.rel_embeds, self.eval_all_embeds_g, triples, id_dict, self.time)
         return rank
 
     def forward(self, quadruples):
         neg_tail_samples, neg_head_samples, labels = self.corrupter.negative_sampling(quadruples.cpu())
-        forward_func = self.forward_full_batch if self.multi_step else self.forward_incremental
+        forward_func = self.forward_multi_step if self.multi_step else self.forward_incremental
         return forward_func(quadruples, neg_tail_samples, neg_head_samples, labels)
 
-    def get_ent_embeds_full_batch(self):
+    def get_ent_embeds_multi_step(self):
         max_num_entities = max([len(self.graph_dict_train[t].nodes()) for t in range(max(0, self.time - self.train_seq_len), self.time + 1)])
         num_time_steps = self.time - max(0, self.time - self.train_seq_len) + 1
         ent_embed_all_time = self.ent_embeds.new_zeros(num_time_steps, max_num_entities, self.embed_size)
@@ -42,11 +42,11 @@ class TKG_Embedding(TKG_Module):
 
         return ent_embed_all_time, all_embeds_g_all_time
 
-    def forward_full_batch(self, quadruples, neg_tail_samples, neg_head_samples, labels):
-        ent_embed_all_time, all_embeds_g_all_time = self.get_ent_embeds_full_batch()
-        loss_head = self.train_link_prediction_full_batch(ent_embed_all_time, all_embeds_g_all_time, quadruples,
+    def forward_multi_step(self, quadruples, neg_tail_samples, neg_head_samples, labels):
+        ent_embed_all_time, all_embeds_g_all_time = self.get_ent_embeds_multi_step()
+        loss_head = self.train_link_prediction_multi_step(ent_embed_all_time, all_embeds_g_all_time, quadruples,
                                                           neg_head_samples, labels, corrupt_tail=False)
-        loss_tail = self.train_link_prediction_full_batch(ent_embed_all_time, all_embeds_g_all_time, quadruples,
+        loss_tail = self.train_link_prediction_multi_step(ent_embed_all_time, all_embeds_g_all_time, quadruples,
                                                           neg_tail_samples, labels, corrupt_tail=True)
         return loss_tail + loss_head
 

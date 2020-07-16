@@ -174,7 +174,6 @@ class TKG_Module(LightningModule):
 
         self.metrics_collector.update_eval_metrics(self.time, mrr.item(), hit_1.item(), hit_3.item(), hit_10.item())
 
-
         test_result = {'mrr': mrr.item(),
                         # 'avg_test_loss': avg_test_loss.item(),
                         'hit_10': hit_10.item(),
@@ -236,7 +235,8 @@ class TKG_Module(LightningModule):
 
     @pl.data_loader
     def test_dataloader(self):
-        return self._dataloader(self.graph_dict_test, self.args.test_batch_size, 0)
+        test_graph_dict = self.graph_dict_test if self.args.test else self.graph_dict_val
+        return self._dataloader(test_graph_dict, self.args.test_batch_size, 0)
 
     def collect_embedding_corrupt_tail(self, quadruples, neg_samples, ent_embed_all_time, all_embeds_g_all_time):
         # time_idx = []
@@ -286,7 +286,7 @@ class TKG_Module(LightningModule):
         # neg_subject_embedding = all_embeds_g_all_time[all_time_idx, all_ent_idx].view(*neg_samples.shape, self.embed_size)
         return neg_subject_embedding, object_embedding
 
-    def train_link_prediction_full_batch(self, ent_embed_all_time, all_embeds_g_all_time, quadruples, neg_samples, labels, corrupt_tail=True):
+    def train_link_prediction_multi_step(self, ent_embed_all_time, all_embeds_g_all_time, quadruples, neg_samples, labels, corrupt_tail=True):
         relation_embedding = self.rel_embeds[quadruples[:, 1]]
         embed_collector = self.collect_embedding_corrupt_tail if corrupt_tail else self.collect_embedding_corrupt_head
         subject_embedding, object_embedding = embed_collector(quadruples, neg_samples, ent_embed_all_time, all_embeds_g_all_time)

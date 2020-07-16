@@ -87,8 +87,8 @@ def get_add_del_graph(graph_dict_train):
 
 
 def move_dgl_to_cuda(g, device):
-    g.ndata.update_eval_metrics({k: cuda(g.ndata[k], device) for k in g.ndata})
-    g.edata.update_eval_metrics({k: cuda(g.edata[k], device) for k in g.edata})
+    g.ndata.update({k: cuda(g.ndata[k], device) for k in g.ndata})
+    g.edata.update({k: cuda(g.edata[k], device) for k in g.edata})
 
 
 def cuda(tensor, device):

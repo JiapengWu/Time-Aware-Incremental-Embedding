@@ -30,6 +30,7 @@ def get_args():
     parser.add_argument("--negative-rate", type=int, default=500)
     parser.add_argument('--log-gpu-memory', action='store_true')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--test', action='store_true')
 
     parser.add_argument("--overfit", action='store_true')
     parser.add_argument("--multi-step", action='store_true')

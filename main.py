@@ -103,9 +103,8 @@ if __name__ == '__main__':
                           fast_dev_run=args.fast,
                           num_processes=args.num_processes,
                           distributed_backend=args.distributed_backend,
-                          num_sanity_val_steps=1 if args.debug else 1,
+                          num_sanity_val_steps=1,
                           early_stop_callback=early_stop_callback,
-                          limit_train_batches=1 if args.debug else 1.0,
                           overfit_batches=1 if args.overfit else 0,
                           show_progress_bar=True,
                           checkpoint_callback=checkpoint_callback)
