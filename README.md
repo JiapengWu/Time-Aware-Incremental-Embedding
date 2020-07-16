@@ -9,7 +9,7 @@ python main.py --module SRGCN -d wiki --n-gpu 0 --score-function complex --negat
 ```
   `--n-gpu`: index of the gpus for usage, e.g. `--n-gpu 0 1 2` for using GPU indexed 0, 1 and 2.
   
- `dataset` or `-d`: name of the dataset, `wiki` or  `yago`.
+ `--dataset` or `-d`: name of the dataset, `wiki` or  `yago`.
  
  `--module`: name of the base encoder. Use `Static` for static embedding methods; `DE` for diachronic embeddding; `SRGCN` for static RGCN model.
 
@@ -29,3 +29,16 @@ python main.py --module SRGCN -d wiki --n-gpu 0 --score-function complex --negat
    `--debug`: instead of redirecting the logs to a log file, print them on stdout.
    
    `--fast`: both training and valication in each epoch are only performed on one batch. Fast sanity check for training and validation.  
+   
+   `--addition`: training using added edges only
+   
+   `--multi-step`: training using edges at multiple time steps preceeding the current time step
+   
+   `--start-time-step`: index of the first snapshot the model is trained on. Default 0.
+   
+   `--end-time-step`: index of the last snapshot the model is trained on. Default maximum number of time step in the dataset.
+   
+   `--load-base-model`: if there is a model pretrained on time step 0, use this flag so that the `start-time-step` will be set to 1 automatically.
+   `--base-model-path`: use the checkpoint path of the pretrained model, if `load-base-model` is set to true.
+   
+   Note: if you wnat to train a base model, simply set the `--end-time-step 0` so that the program exits after finishing training on the first snapshot. 

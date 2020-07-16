@@ -39,7 +39,6 @@ def get_args():
     parser.add_argument("--base-model-path", action='store_true', help='path of the base model')
     parser.add_argument("--start-time-step", type=int, default=0)
     parser.add_argument("--end-time-step", type=int, default=10000, help='stop training after this number of time steps, used for base model training')
-    parser.add_argument("--train-base-model", action='store_true', help='train the base model on edges at time 0')
 
     parser.add_argument("--fast", action='store_true')
     parser.add_argument('--config', '-c', type=str, default=None, help='JSON file with argument for the run.')
