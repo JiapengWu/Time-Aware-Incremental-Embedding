@@ -13,6 +13,7 @@ import torch.nn as nn
 from utils.utils import get_add_del_graph
 import os
 import glob
+import torch
 
 
 class TKG_Module(LightningModule):
@@ -30,7 +31,7 @@ class TKG_Module(LightningModule):
         self.hidden_size = args.hidden_size
         self.use_cuda = args.use_cuda
         self.negative_rate = args.negative_rate
-        self.calc_score = {'distmult': distmult, 'complex': complex, 'transE': transE}[args.score_function]
+        self.calc_score = {'distmult': distmult, 'complex': complex, 'transE': transE, 'atise':ATiSE_score}[args.score_function]
         self.build_model()
         self.init_metrics_collection()
         self.multi_step = self.args.multi_step
@@ -293,13 +294,20 @@ class TKG_Module(LightningModule):
         score = self.calc_score(subject_embedding, relation_embedding, object_embedding, mode='tail' if corrupt_tail else "head")
         return F.cross_entropy(score, labels.long())
 
-    def train_link_prediction(self, ent_embed, quadruples, neg_samples, labels, all_embeds_g, corrupt_tail=True):
+    def train_link_prediction(self, ent_embed, quadruples, neg_samples, labels, all_embeds_g, corrupt_tail=True, loss='CE'):
         # neg samples are in global idx
         relation_embedding = self.rel_embeds[quadruples[:, 1]]
         subject_embedding = ent_embed[quadruples[:, 0]] if corrupt_tail else all_embeds_g[neg_samples]
         object_embedding = all_embeds_g[neg_samples] if corrupt_tail else ent_embed[quadruples[:, 2]]
         score = self.calc_score(subject_embedding, relation_embedding, object_embedding, mode='tail' if corrupt_tail else 'head')
-        return F.cross_entropy(score, labels.long())
+        if loss == 'CE':
+            return F.cross_entropy(score, labels.long())
+        elif loss == 'margin':
+            pos_score = score[:, 0].unsqueeze(-1).repeat(1, self.negative_rate)
+            neg_score = score[:, 1:]
+            return  torch.sum(- F.logsigmoid(1 - pos_score) - F.logsigmoid(neg_score - 1))
+        else:
+            raise NotImplementedError
 
     def link_classification_loss(self, ent_embed, rel_embeds, triplets, labels):
         # triplets is a list of extrapolation samples (positive and negative)

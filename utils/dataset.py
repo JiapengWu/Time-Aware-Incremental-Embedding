@@ -175,7 +175,7 @@ def get_train_val_test_graph_at_t(triples, num_rels):
         graph.add_nodes(len(uniq_v))
         graph.add_edges(cur_src, cur_dst)
         node_norm = comp_deg_norm(graph)
-        graph.ndata.update_eval_metrics({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': torch.from_numpy(node_norm).view(-1, 1)})
+        graph.ndata.update({'id': torch.from_numpy(uniq_v).long().view(-1, 1), 'norm': torch.from_numpy(node_norm).view(-1, 1)})
         # import pdb; pdb.set_trace()
         graph.edata['norm'] = node_norm_to_edge_norm(graph, torch.from_numpy(node_norm).view(-1, 1))
         graph.edata['type_s'] = torch.LongTensor(cur_rel)

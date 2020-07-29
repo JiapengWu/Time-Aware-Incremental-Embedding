@@ -2,9 +2,8 @@
 from utils.dataset import *
 from utils.args import process_args
 from baselines.Static import Static
-from baselines.Simple import SimplE
-from baselines.Hyte import Hyte
 from baselines.DiachronicEmbedding import DiachronicEmbedding
+from baselines.ATiSE import ATiSE
 from baselines.StaticRGCN import StaticRGCN
 import time
 from pytorch_lightning import Trainer
@@ -57,10 +56,9 @@ if __name__ == '__main__':
 
     total_time = np.array(list(graph_dict_train.keys()))
     module = {
-              "Simple": SimplE,
               "Static": Static,
               "DE": DiachronicEmbedding,
-              "Hyte": Hyte,
+              "ATiSE": ATiSE,
               "SRGCN": StaticRGCN
               }[args.module]
 
