@@ -25,7 +25,6 @@ class metric_collection:
         self.metrics['hits_1'][time] = hit_1
         self.metrics['mrr'][time] = mrr
 
-
     def update_eval_accumulated_metrics(self, accumulative_val_result):
         self.metrics['hits_10_overall'] = accumulative_val_result['hit_10']
         self.metrics['hits_3_overall'] = accumulative_val_result['hit_3']

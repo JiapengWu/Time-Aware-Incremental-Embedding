@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from utils.evaluation_filter import EvaluationFilter
 from utils.metrics_collection import metric_collection, counter_gauge
 import torch.nn as nn
-from utils.utils import get_add_del_graph
+from utils.utils import get_add_del_graph, get_metrics, get_know_entities_per_time_step
 import os
 import glob
 
@@ -32,10 +32,10 @@ class TKG_Module(LightningModule):
         self.negative_rate = args.negative_rate
         self.calc_score = {'distmult': distmult, 'complex': complex, 'transE': transE}[args.score_function]
         self.build_model()
-        self.init_metrics_collection()
+        if not self.args.inference:
+            self.init_metrics_collection()
         self.multi_step = self.args.multi_step
         self.train_seq_len = self.args.train_seq_len if self.multi_step else 0
-        self.occurred_entity_positive_mask = np.zeros(self.num_ents)
         self.corrupter = CorruptTriples(self)
         self.evaluater = EvaluationFilter(self)
         self.addition = args.addition
@@ -45,9 +45,13 @@ class TKG_Module(LightningModule):
 
         self.ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size))
         self.rel_embeds = nn.Parameter(torch.Tensor(self.num_rels * 2, self.embed_size))
+        self.init_parameters()
 
-        nn.init.xavier_uniform_(self.ent_embeds, gain=nn.init.calculate_gain('relu'))
-        nn.init.xavier_uniform_(self.rel_embeds, gain=nn.init.calculate_gain('relu'))
+        self.kd = args.kd
+        if self.kd:
+            self.kd_factor = self.args.kd_factor
+            self.old_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size), requires_grad=False)
+            self.old_rel_embeds = nn.Parameter(torch.Tensor(self.num_rels * 2, self.embed_size), requires_grad=False)
 
     def init_metrics_collection(self):
         self.accumulative_val_result = {"mrr": 0, "hit_1": 0, "hit_3": 0, "hit_10": 0, "all_ranks": None}
@@ -58,27 +62,33 @@ class TKG_Module(LightningModule):
 
         self.epoch_time_gauge = counter_gauge()
 
+    def init_parameters(self):
+        nn.init.xavier_uniform_(self.ent_embeds, gain=nn.init.calculate_gain('relu'))
+        nn.init.xavier_uniform_(self.rel_embeds, gain=nn.init.calculate_gain('relu'))
+
     def on_time_step_start(self, time):
         self.time = time
         self.train_graph = self.graph_dict_train[time]
-        self.val_graph = self.graph_dict_val[time]
-        self.test_graph = self.graph_dict_test[time]
-        self.occurred_entity_positive_mask[list(self.train_graph.ids.values())] = 1
-        self.known_entities = self.occurred_entity_positive_mask.nonzero()[0]
-        # self.evaluater.known_entities = self.corrupter.known_entities = known_entities
+        self.known_entities = self.inference_know_entities[time]
+
+        if self.kd and time > 0:
+            self.old_ent_embeds.data = self.ent_embeds.data.clone()
+            self.old_rel_embeds.data = self.rel_embeds.data.clone()
+            self.last_known_entities = self.inference_know_entities[time - 1]
+
         print("Number of known entities up to time step {}: {}".format(self.time, len(self.known_entities)))
         # self.reduced_ent_embeds = self.ent_embeds[self.known_entities]
-        if self.addition:
-            self.added_train_graph = self.added_graph_dict_train[time]
 
     def on_time_step_end(self):
-        load_path = glob.glob(os.path.join(os.path.join(self.args.base_path, "snapshot-{}").format(self.time), "*.ckpt"))[0]
-        checkpoint = torch.load(load_path, map_location=lambda storage, loc: storage)
-        self.load_state_dict(checkpoint['state_dict'])
+        if self.args.cold_start:
+            self.init_parameters()
+        else:
+            load_path = glob.glob(os.path.join(os.path.join(self.args.base_path, "snapshot-{}").format(self.time), "*.ckpt"))[0]
+            checkpoint = torch.load(load_path, map_location=lambda storage, loc: storage)
+            self.load_state_dict(checkpoint['state_dict'])
 
         self.metrics_collector.update_eval_accumulated_metrics(self.accumulative_val_result)
         self.metrics_collector.update_time(self.time, self.epoch_time_gauge)
-
         self.metrics_collector.save()
         self.epoch_time_gauge.reset()
 
@@ -94,6 +104,7 @@ class TKG_Module(LightningModule):
         torch.cuda.synchronize()
         epoch_time = self.epoch_start_event.elapsed_time(self.epoch_end_event)
         self.epoch_time_gauge.add(epoch_time)
+
 
     def training_step(self, quadruples, batch_idx):
         loss = self.forward(quadruples)
@@ -138,7 +149,7 @@ class TKG_Module(LightningModule):
     def validation_epoch_end(self, outputs):
         # avg_val_loss = np.mean([x['val_loss'].item() for x in outputs])
         all_ranks = torch.cat([x['ranks'] for x in outputs])
-        mrr, hit_1, hit_3, hit_10 = self.get_metrics(all_ranks)
+        mrr, hit_1, hit_3, hit_10 = get_metrics(all_ranks)
 
         return {'mrr': mrr,
                 # 'avg_val_loss': avg_val_loss,
@@ -170,7 +181,7 @@ class TKG_Module(LightningModule):
     def test_epoch_end(self, outputs):
         # avg_test_loss = np.mean([x['test_loss'].item() for x in outputs])
         all_ranks = torch.cat([x['ranks'] for x in outputs])
-        mrr, hit_1, hit_3, hit_10 = self.get_metrics(all_ranks)
+        mrr, hit_1, hit_3, hit_10 = get_metrics(all_ranks)
 
         self.metrics_collector.update_eval_metrics(self.time, mrr.item(), hit_1.item(), hit_3.item(), hit_10.item())
 
@@ -189,19 +200,12 @@ class TKG_Module(LightningModule):
             self.accumulative_val_result['all_ranks'] = test_ranks
         else:
             self.accumulative_val_result['all_ranks'] = torch.cat([self.accumulative_val_result['all_ranks'], test_ranks])
-        mrr, hit_1, hit_3, hit_10 = self.get_metrics(self.accumulative_val_result['all_ranks'])
+        mrr, hit_1, hit_3, hit_10 = get_metrics(self.accumulative_val_result['all_ranks'])
         self.accumulative_val_result.update({'mrr': mrr.item(),
                        'hit_10': hit_10.item(),
                        'hit_3': hit_3.item(),
                        'hit_1': hit_1.item()
                        })
-
-    def get_metrics(self, ranks):
-        mrr = torch.mean(1.0 / ranks.float())
-        hit_1 = torch.mean((ranks <= 1).float())
-        hit_3 = torch.mean((ranks <= 3).float())
-        hit_10 = torch.mean((ranks <= 10).float())
-        return mrr, hit_1, hit_3, hit_10
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=0.0001)
@@ -225,6 +229,9 @@ class TKG_Module(LightningModule):
     @pl.data_loader
     def train_dataloader(self):
         train_graph_dict = self.added_graph_dict_train if self.addition else self.graph_dict_train
+        # print("At time step {}, number of edges: {}, number of added edges: {}"
+        #       .format(self.time, len(self.graph_dict_train[self.time].edges()[0]),
+        #               len(self.added_graph_dict_train[self.time].edges()[0])))
         return self._dataloader(train_graph_dict, self.args.train_batch_size, self.train_seq_len, train=True)
         # train_graph = self.added_train_graph if self.addition else self.train_graph
         # return self._dataloader(train_graph, self.args.train_batch_size, train=True)
@@ -235,7 +242,7 @@ class TKG_Module(LightningModule):
 
     @pl.data_loader
     def test_dataloader(self):
-        test_graph_dict = self.graph_dict_test if self.args.test else self.graph_dict_val
+        test_graph_dict = self.graph_dict_test if self.args.eval_on_test_set else self.graph_dict_val
         return self._dataloader(test_graph_dict, self.args.test_batch_size, 0)
 
     def collect_embedding_corrupt_tail(self, quadruples, neg_samples, ent_embed_all_time, all_embeds_g_all_time):
@@ -310,3 +317,9 @@ class TKG_Module(LightningModule):
         score = self.calc_score(s, r, o)
         predict_loss = F.binary_cross_entropy_with_logits(score, labels)
         return predict_loss
+
+    def set_known_entities_per_time_step(self, inference_know_entities):
+        self.inference_know_entities = inference_know_entities
+
+    def get_know_entities_per_time_step(self):
+        self.inference_know_entities = get_know_entities_per_time_step(self.graph_dict_train, self.num_ents)

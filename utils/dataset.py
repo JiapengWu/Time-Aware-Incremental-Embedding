@@ -220,17 +220,17 @@ def get_per_entity_time_sequence(time2triples):
     # import pdb; pdb.set_trace()
     return interaction_time_sequence
 
-
-def build_interpolation_graphs(args):
-    train_graph_dict_path = os.path.join(args.dataset, 'train_graphs.txt')
-    dev_graph_dict_path = os.path.join(args.dataset, 'dev_graphs.txt')
-    test_graph_dict_path = os.path.join(args.dataset, 'test_graphs.txt')
+def build_interpolation_graphs_given_dataset(dataset):
+    train_graph_dict_path = os.path.join(dataset, 'train_graphs.txt')
+    dev_graph_dict_path = os.path.join(dataset, 'dev_graphs.txt')
+    test_graph_dict_path = os.path.join(dataset, 'test_graphs.txt')
     # time_sequence = os.path.join(args.dataset, 'interaction_time_sequence.txt')
-    if not os.path.isfile(train_graph_dict_path) or not os.path.isfile(dev_graph_dict_path) or not os.path.isfile(test_graph_dict_path):
+    if not os.path.isfile(train_graph_dict_path) or not os.path.isfile(dev_graph_dict_path) or not os.path.isfile(
+            test_graph_dict_path):
 
-        total_data, total_times = load_quadruples(args.dataset, 'train.txt', 'valid.txt', 'test.txt')
-        time2triples = load_quadruples_interpolation(args.dataset, 'train.txt', 'valid.txt', 'test.txt', total_times)
-        num_e, num_r = get_total_number(args.dataset, 'stat.txt')
+        total_data, total_times = load_quadruples(dataset, 'train.txt', 'valid.txt', 'test.txt')
+        time2triples = load_quadruples_interpolation(dataset, 'train.txt', 'valid.txt', 'test.txt', total_times)
+        num_e, num_r = get_total_number(dataset, 'stat.txt')
 
         # interaction_time_sequence = get_per_entity_time_sequence(time2triples)
 
@@ -245,8 +245,8 @@ def build_interpolation_graphs(args):
             graph_dict_test[tim] = g_test
 
         for graph_dict, path in zip(
-            [graph_dict_train, graph_dict_dev, graph_dict_test],
-            [train_graph_dict_path, dev_graph_dict_path, test_graph_dict_path]
+                [graph_dict_train, graph_dict_dev, graph_dict_test],
+                [train_graph_dict_path, dev_graph_dict_path, test_graph_dict_path]
         ):
             with open(path, 'wb') as fp:
                 pickle.dump(graph_dict, fp)
@@ -259,6 +259,10 @@ def build_interpolation_graphs(args):
         graph_dict_train, graph_dict_dev, graph_dict_test = graph_dicts
 
     return graph_dict_train, graph_dict_dev, graph_dict_test
+
+
+def build_interpolation_graphs(args):
+    return build_interpolation_graphs_given_dataset(args.dataset)
 
 
 def id2entrel(dataset_path, num_rels):
@@ -298,12 +302,8 @@ class FullBatchDataset(Dataset):
         self.quadruples = self.get_quadruples(graph, time)
 
     def get_quadruples(self, graph, time):
-        try:
-            return torch.stack([graph.edges()[0], graph.edata['type_s'], graph.edges()[1],
-                                      torch.ones(len(graph.edges()[0]), dtype=int) * time]).transpose(0, 1)
-        except:
-            return torch.stack([graph.edges()[0], graph.edata['type_s'], graph.edges()[1],
-                                      torch.ones(len(graph.edges()[0]), dtype=int) * time]).transpose(0, 1)
+        return torch.stack([graph.edges()[0], graph.edata['type_s'], graph.edges()[1],
+                                  torch.ones(len(graph.edges()[0]), dtype=int) * time]).transpose(0, 1)
 
     def __getitem__(self, index):
         return self.quadruples[index]

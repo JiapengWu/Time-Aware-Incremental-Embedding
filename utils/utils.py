@@ -6,6 +6,7 @@ import json
 import dgl
 import torch
 import pdb
+import torch.nn as nn
 
 
 def build_sampled_graph_from_triples(triples, train_graph):
@@ -137,7 +138,7 @@ class MyTestTubeLogger(TestTubeLogger):
     def __init__(self, *args, **kwargs):
         super(MyTestTubeLogger, self).__init__(*args, **kwargs)
 
-    def log_hyperparams(self, args):
+    def log_args(self, args):
         config_path = self.experiment.get_data_path(self.experiment.name, self.experiment.version)
         with open(os.path.join(config_path, 'config.json'), 'w') as configfile:
             configfile.write(json.dumps(args.__dict__, indent=2, sort_keys=True))
@@ -150,3 +151,24 @@ def comp_deg_norm(g):
     norm[np.isinf(norm)] = 0
     return norm
 
+
+def get_metrics(ranks):
+    mrr = torch.mean(1.0 / ranks.float())
+    hit_1 = torch.mean((ranks <= 1).float())
+    hit_3 = torch.mean((ranks <= 3).float())
+    hit_10 = torch.mean((ranks <= 10).float())
+    return mrr, hit_1, hit_3, hit_10
+
+
+def mse_loss(input, target):
+    return torch.sum((input - target) ** 2)
+
+
+def get_know_entities_per_time_step(graph_dict_train, num_ents):
+    inference_know_entities = {}
+    occurred_entity_positive_mask = np.zeros(num_ents)
+    for t in range(len(graph_dict_train)):
+        occurred_entity_positive_mask[list(graph_dict_train[t].ids.values())] = 1
+        known_entities = occurred_entity_positive_mask.nonzero()[0]
+        inference_know_entities[t] = known_entities
+    return inference_know_entities

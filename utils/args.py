@@ -30,12 +30,22 @@ def get_args():
     parser.add_argument("--negative-rate", type=int, default=500)
     parser.add_argument('--log-gpu-memory', action='store_true')
     parser.add_argument('--debug', action='store_true')
-    parser.add_argument('--test', action='store_true')
+    parser.add_argument('--eval-on-test-set', action='store_true')
+    parser.add_argument("--cold-start", action='store_true', help='Not loading models from the last time step')
+
+    parser.add_argument('--inference', action='store_true')
+    parser.add_argument('--multi-step-inference', action='store_true')
+    parser.add_argument('--prediction-file-path',type=str, default='')
+    parser.add_argument('--analysis', action='store_true')
 
     parser.add_argument("--overfit", action='store_true')
+    parser.add_argument("--negative-sample-all-entities", action='store_true')
+
     parser.add_argument("--multi-step", action='store_true')
     parser.add_argument("--addition", action='store_true')
 
+    parser.add_argument("--kd-factor", type=float, default=1)
+    parser.add_argument("--kd", action='store_true', help='use knowledge distillation')
     parser.add_argument("--load-base-model", action='store_true', help='load a base model')
     parser.add_argument("--base-model-path", action='store_true', help='path of the base model')
     parser.add_argument("--start-time-step", type=int, default=0)
@@ -44,6 +54,7 @@ def get_args():
     parser.add_argument("--fast", action='store_true')
     parser.add_argument('--config', '-c', type=str, default=None, help='JSON file with argument for the run.')
     parser.add_argument("--checkpoint-path", type=str, default=None)
+
     parser.add_argument("--cpu", action='store_true')
     return parser.parse_args()
 
