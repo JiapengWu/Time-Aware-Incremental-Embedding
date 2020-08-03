@@ -65,6 +65,8 @@ class ATiSE(TKG_Embedding):
         self.ent_embeds.data.copy_(self.ent_embeds / torch.norm(self.ent_embeds, dim=1).unsqueeze(1))
         self.rel_embeds.data.copy_(self.rel_embeds / torch.norm(self.rel_embeds, dim=1).unsqueeze(1))
         self.w_ent.data.copy_(self.w_ent / torch.norm(self.w_ent, dim=1).unsqueeze(1))        
+        self.w_rel.data.copy_(self.w_rel / torch.norm(self.w_rel, dim=1).unsqueeze(1))    
+
         self.sigma_ent.data.copy_(torch.clamp(input=self.sigma_ent.data, min=0.005, max=0.5))
         self.sigma_rel.data.copy_(torch.clamp(input=self.sigma_rel.data, min=0.005, max=0.5))    
 
