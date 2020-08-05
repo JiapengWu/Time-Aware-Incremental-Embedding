@@ -2,9 +2,8 @@
 from utils.dataset import *
 from utils.args import process_args
 from baselines.Static import Static
-from baselines.Simple import SimplE
-from baselines.Hyte import Hyte
 from baselines.DiachronicEmbedding import DiachronicEmbedding
+from baselines.ATiSE import ATiSE
 from baselines.StaticRGCN import StaticRGCN
 import time
 from pytorch_lightning import Trainer
@@ -33,20 +32,19 @@ if __name__ == '__main__':
 
     use_cuda = args.use_cuda = len(args.n_gpu) >= 0 and torch.cuda.is_available() and not args.cpu
     args.n_gpu = 0 if args.cpu else args.n_gpu
-    name = "{}-{}-{}-patience-{}-{}{}{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1],
+    torch.cuda.set_device(args.n_gpu[0])
+
+    name = "{}-{}-{}-patience-{}{}{}{}{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1],
                                         args.score_function, args.patience,
                                         "-addition" if args.addition else "",
+                                        "-deletion" if args.deletion else "",
                                         "-multi-step" if args.multi_step else "",
                                         '-length-{}'.format(args.train_seq_len) if args.multi_step else '',
-                                        '-kd-factor-{}'.format(args.kd_factor) if args.kd else '',
+                                        '-kd-factor-{}'.format(args.kd_factor) if args.self_kd else '',
                                         "-debug" if args.debug else "",
                                         "-overfit" if args.overfit else "",
                                         "-cold-start" if args.cold_start else "",
-
                                         )
-
-    # print(json.dumps(args.__dict__, indent=2, sort_keys=True))
-    # exit()
 
     version = time.strftime('%Y%m%d%H%M')
     log_file_out = "logs/log-{}-{}".format(name, version)
@@ -71,9 +69,9 @@ if __name__ == '__main__':
 
     total_time = np.array(list(graph_dict_train.keys()))
     module = {
-              "Simple": SimplE,
               "Static": Static,
               "DE": DiachronicEmbedding,
+              "ATiSE": ATiSE,
               "SRGCN": StaticRGCN
               }[args.module]
 
@@ -124,9 +122,10 @@ if __name__ == '__main__':
                           # print_nan_grads=True,
                           checkpoint_callback=checkpoint_callback
                           )
-
         model.on_time_step_start(time)
         trainer.fit(model)
         trainer.use_ddp = False
+        model.load_best_checkpoint()
         test_res = trainer.test(model=model)
+        # trainer.use_ddp = True
         model.on_time_step_end()

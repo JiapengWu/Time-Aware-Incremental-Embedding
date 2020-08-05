@@ -43,9 +43,10 @@ def get_args():
 
     parser.add_argument("--multi-step", action='store_true')
     parser.add_argument("--addition", action='store_true')
+    parser.add_argument("--deletion", action='store_true')
 
     parser.add_argument("--kd-factor", type=float, default=1)
-    parser.add_argument("--kd", action='store_true', help='use knowledge distillation')
+    parser.add_argument("--self-kd", action='store_true', help='use knowledge distillation')
     parser.add_argument("--load-base-model", action='store_true', help='load a base model')
     parser.add_argument("--base-model-path", action='store_true', help='path of the base model')
     parser.add_argument("--start-time-step", type=int, default=0)

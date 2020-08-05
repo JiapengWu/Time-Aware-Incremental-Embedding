@@ -13,6 +13,8 @@ import torch.nn as nn
 from utils.utils import get_add_del_graph, get_metrics, get_know_entities_per_time_step
 import os
 import glob
+import torch
+import time
 
 
 class TKG_Module(LightningModule):
@@ -30,7 +32,7 @@ class TKG_Module(LightningModule):
         self.hidden_size = args.hidden_size
         self.use_cuda = args.use_cuda
         self.negative_rate = args.negative_rate
-        self.calc_score = {'distmult': distmult, 'complex': complex, 'transE': transE}[args.score_function]
+        self.calc_score = {'distmult': distmult, 'complex': complex, 'transE': transE, 'atise':ATiSE_score}[args.score_function]
         self.build_model()
         if not self.args.inference:
             self.init_metrics_collection()
@@ -39,16 +41,17 @@ class TKG_Module(LightningModule):
         self.corrupter = CorruptTriples(self)
         self.evaluater = EvaluationFilter(self)
         self.addition = args.addition
+        self.deletion = args.deletion
         self.n_gpu = self.args.n_gpu
-        if self.addition:
-            self.added_graph_dict_train, self.deleted_graph_dict_train = get_add_del_graph(graph_dict_train)
+        if self.addition or self.deletion:
+            self.added_graph_dict_train, self.deleted_graph_triples_train = get_add_del_graph(graph_dict_train)
 
         self.ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size))
         self.rel_embeds = nn.Parameter(torch.Tensor(self.num_rels * 2, self.embed_size))
         self.init_parameters()
 
-        self.kd = args.kd
-        if self.kd:
+        self.self_kd = args.self_kd
+        if self.self_kd:
             self.kd_factor = self.args.kd_factor
             self.old_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size), requires_grad=False)
             self.old_rel_embeds = nn.Parameter(torch.Tensor(self.num_rels * 2, self.embed_size), requires_grad=False)
@@ -56,36 +59,33 @@ class TKG_Module(LightningModule):
     def init_metrics_collection(self):
         self.accumulative_val_result = {"mrr": 0, "hit_1": 0, "hit_3": 0, "hit_10": 0, "all_ranks": None}
         self.metrics_collector = metric_collection(self.args.base_path)
-
-        self.epoch_start_event = torch.cuda.Event(enable_timing=True)
-        self.epoch_end_event = torch.cuda.Event(enable_timing=True)
-
+        self.epoch_time = 0
+        # self.epoch_start_event = torch.cuda.Event(enable_timing=True)
+        # self.epoch_end_event = torch.cuda.Event(enable_timing=True)
         self.epoch_time_gauge = counter_gauge()
 
     def init_parameters(self):
         nn.init.xavier_uniform_(self.ent_embeds, gain=nn.init.calculate_gain('relu'))
         nn.init.xavier_uniform_(self.rel_embeds, gain=nn.init.calculate_gain('relu'))
 
+    def load_best_checkpoint(self):
+        load_path = glob.glob(os.path.join(os.path.join(self.args.base_path, "snapshot-{}").format(self.time), "*.ckpt"))[0]
+        checkpoint = torch.load(load_path, map_location=lambda storage, loc: storage)
+        self.load_state_dict(checkpoint['state_dict'])
+
     def on_time_step_start(self, time):
         self.time = time
         self.train_graph = self.graph_dict_train[time]
         self.known_entities = self.inference_know_entities[time]
 
-        if self.kd and time > 0:
-            self.old_ent_embeds.data = self.ent_embeds.data.clone()
-            self.old_rel_embeds.data = self.rel_embeds.data.clone()
-            self.last_known_entities = self.inference_know_entities[time - 1]
-
+        if self.self_kd and time > 0:
+            self.load_old_parameters()
         print("Number of known entities up to time step {}: {}".format(self.time, len(self.known_entities)))
         # self.reduced_ent_embeds = self.ent_embeds[self.known_entities]
 
     def on_time_step_end(self):
         if self.args.cold_start:
             self.init_parameters()
-        else:
-            load_path = glob.glob(os.path.join(os.path.join(self.args.base_path, "snapshot-{}").format(self.time), "*.ckpt"))[0]
-            checkpoint = torch.load(load_path, map_location=lambda storage, loc: storage)
-            self.load_state_dict(checkpoint['state_dict'])
 
         self.metrics_collector.update_eval_accumulated_metrics(self.accumulative_val_result)
         self.metrics_collector.update_time(self.time, self.epoch_time_gauge)
@@ -97,14 +97,16 @@ class TKG_Module(LightningModule):
             print("{}: {}".format(i, self.accumulative_val_result[i]))
 
     def on_epoch_start(self):
-        self.epoch_start_event.record()
+        self.epoch_time = 0
 
     def on_epoch_end(self):
-        self.epoch_end_event.record()
-        torch.cuda.synchronize()
-        epoch_time = self.epoch_start_event.elapsed_time(self.epoch_end_event)
-        self.epoch_time_gauge.add(epoch_time)
+        print(self.epoch_time)
+        # import pdb; pdb.set_trace()
+        self.epoch_time_gauge.add(self.epoch_time)
 
+    def on_batch_end(self):
+        torch.cuda.synchronize()
+        self.epoch_time += time.time() - self.batch_start_time
 
     def training_step(self, quadruples, batch_idx):
         loss = self.forward(quadruples)
@@ -246,10 +248,6 @@ class TKG_Module(LightningModule):
         return self._dataloader(test_graph_dict, self.args.test_batch_size, 0)
 
     def collect_embedding_corrupt_tail(self, quadruples, neg_samples, ent_embed_all_time, all_embeds_g_all_time):
-        # time_idx = []
-        # ent_idx = []
-        # all_time_idx = []
-        # all_ent_idx = []
         subject_embedding = self.ent_embeds.new_zeros(len(quadruples), self.embed_size)
         neg_object_embedding = self.ent_embeds.new_zeros(*neg_samples.shape, self.embed_size)
         for i in range(len(quadruples)):
@@ -258,22 +256,9 @@ class TKG_Module(LightningModule):
             s, t = s.item(), t.item()
             subject_embedding[i] = ent_embed_all_time[self.time - t][s]
             neg_object_embedding[i] = all_embeds_g_all_time[self.time - t][neg_o]
-            # time_idx.append(t)
-            # ent_idx.append(s)
-            # all_time_idx.extend([t] * len(neg_o))
-            # all_ent_idx.extend(neg_o)
-        # subject_embedding = ent_embed_all_time[time_idx, ent_idx]
-        # neg_object_embedding = all_embeds_g_all_time[all_time_idx, all_ent_idx].view(*neg_samples.shape, self.embed_size)
-        # assert torch.all(neg_object_embedding == all_embeds_g_all_time[0][neg_samples])
-        # assert torch.all(subject_embedding == ent_embed_all_time[0][quadruples[:, 0]])
         return subject_embedding, neg_object_embedding
 
     def collect_embedding_corrupt_head(self, quadruples, neg_samples, ent_embed_all_time, all_embeds_g_all_time):
-        # pdb.set_trace()
-        # time_idx = []
-        # ent_idx = []
-        # all_time_idx = []
-        # all_ent_idx = []
         object_embedding = self.ent_embeds.new_zeros(len(quadruples), self.embed_size)
         neg_subject_embedding = self.ent_embeds.new_zeros(*neg_samples.shape, self.embed_size)
         for i in range(len(quadruples)):
@@ -282,15 +267,6 @@ class TKG_Module(LightningModule):
             neg_s = neg_samples[i]
             object_embedding[i] = ent_embed_all_time[self.time - t][o]
             neg_subject_embedding[i] = all_embeds_g_all_time[self.time - t][neg_s]
-            # time_idx.append(t)
-            # ent_idx.append(o)
-            # all_time_idx.extend([t] * len(neg_s))
-            # all_ent_idx.extend(neg_s)
-        # pdb.set_trace()
-        # assert torch.all(neg_subject_embedding == all_embeds_g_all_time[0][neg_samples])
-        # assert torch.all(object_embedding == ent_embed_all_time[0][quadruples[:, 2]])
-        # object_embedding = ent_embed_all_time[time_idx, ent_idx]
-        # neg_subject_embedding = all_embeds_g_all_time[all_time_idx, all_ent_idx].view(*neg_samples.shape, self.embed_size)
         return neg_subject_embedding, object_embedding
 
     def train_link_prediction_multi_step(self, ent_embed_all_time, all_embeds_g_all_time, quadruples, neg_samples, labels, corrupt_tail=True):
@@ -300,13 +276,20 @@ class TKG_Module(LightningModule):
         score = self.calc_score(subject_embedding, relation_embedding, object_embedding, mode='tail' if corrupt_tail else "head")
         return F.cross_entropy(score, labels.long())
 
-    def train_link_prediction(self, ent_embed, quadruples, neg_samples, labels, all_embeds_g, corrupt_tail=True):
+    def train_link_prediction(self, ent_embed, quadruples, neg_samples, labels, all_embeds_g, corrupt_tail=True, loss='CE'):
         # neg samples are in global idx
         relation_embedding = self.rel_embeds[quadruples[:, 1]]
         subject_embedding = ent_embed[quadruples[:, 0]] if corrupt_tail else all_embeds_g[neg_samples]
         object_embedding = all_embeds_g[neg_samples] if corrupt_tail else ent_embed[quadruples[:, 2]]
         score = self.calc_score(subject_embedding, relation_embedding, object_embedding, mode='tail' if corrupt_tail else 'head')
-        return F.cross_entropy(score, labels.long())
+        if loss == 'CE':
+            return F.cross_entropy(score, labels.long())
+        elif loss == 'margin':
+            pos_score = score[:, 0].unsqueeze(-1).repeat(1, self.negative_rate)
+            neg_score = score[:, 1:]
+            return torch.sum(- F.logsigmoid(1 - pos_score) - F.logsigmoid(neg_score - 1))
+        else:
+            raise NotImplementedError
 
     def link_classification_loss(self, ent_embed, rel_embeds, triplets, labels):
         # triplets is a list of extrapolation samples (positive and negative)

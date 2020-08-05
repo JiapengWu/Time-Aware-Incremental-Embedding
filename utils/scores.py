@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 
 def distmult(s, r, o, mode='single'):
@@ -53,3 +54,15 @@ def transE(head, relation, tail, mode='single'):
         score = head + relation - tail
     score = - torch.norm(score, p=1, dim=-1)
     return score
+
+def ATiSE_score(head, relation, tail, mode='single'):
+
+    if mode == 'tail':
+        e_prob = head.unsqueeze(1) - tail
+        r_prob = relation.unsqueeze(1).repeat(1,e_prob.shape[1],1)
+    elif mode == 'head':
+        e_prob = head + tail.unsqueeze(1)
+        r_prob = relation.unsqueeze(1).repeat(1,e_prob.shape[1],1)
+    else:
+        e_prob = head - tail
+    return torch.sum(F.kl_div(e_prob, r_prob, reduction='none'), dim=2)
