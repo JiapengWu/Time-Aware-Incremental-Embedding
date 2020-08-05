@@ -28,8 +28,8 @@ class ATiSE(TKG_Embedding):
         nn.init.xavier_uniform_(self.beta_ent, gain=nn.init.calculate_gain('relu'))
         nn.init.xavier_uniform_(self.beta_rel, gain=nn.init.calculate_gain('relu'))
 
-        self.sigma_ent = nn.Parameter(torch.randn(self.num_ents, self.embed_size))
-        self.sigma_rel = nn.Parameter(torch.randn(self.num_rels*2, self.embed_size))
+        self.sigma_ent = nn.Parameter(torch.ones(self.num_ents, self.embed_size).uniform_(0.005,0.5))
+        self.sigma_rel = nn.Parameter(torch.ones(self.num_rels*2, self.embed_size).uniform_(0.005,0.5))
         nn.init.xavier_uniform_(self.sigma_ent, gain=nn.init.calculate_gain('relu'))
         nn.init.xavier_uniform_(self.sigma_rel, gain=nn.init.calculate_gain('relu'))
 
@@ -73,8 +73,8 @@ class ATiSE(TKG_Embedding):
     def forward_incremental(self, quadruples, neg_tail_samples, neg_head_samples, labels):
         ent_embed = self.get_graph_ent_embeds()
         all_embeds_g = self.get_all_embeds_Gt()
-        loss_tail = self.train_link_prediction(ent_embed, quadruples, neg_tail_samples, labels, all_embeds_g, corrupt_tail=True, loss='margin')
-        loss_head = self.train_link_prediction(ent_embed, quadruples, neg_head_samples, labels, all_embeds_g, corrupt_tail=False, loss='margin')
+        loss_tail = self.train_link_prediction(ent_embed, quadruples, neg_tail_samples, labels, all_embeds_g, corrupt_tail=True, loss='CE')
+        loss_head = self.train_link_prediction(ent_embed, quadruples, neg_head_samples, labels, all_embeds_g, corrupt_tail=False, loss='CE')
         self.weight_normalization()
         return loss_tail + loss_head
 
@@ -113,7 +113,9 @@ class ATiSE(TKG_Embedding):
 
             self.eval_rel_embed = self.get_all_rel_embeds_Gt()
 
-        id_dict = self.train_graph.ids
+        local2global = self.train_graph.ids	
+        global2known = dict({n: i for i, n in enumerate(self.known_entities)})	
+
         rank = self.evaluater.calc_metrics_single_graph(self.eval_ent_embed,
-                        self.eval_rel_embed, self.eval_all_embeds_g, triples, id_dict, self.time)
+                        self.eval_rel_embed, self.eval_all_embeds_g, triples, local2global, self.time, global2known)
         return rank

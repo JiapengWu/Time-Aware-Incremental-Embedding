@@ -10,7 +10,6 @@ class CorruptTriples:
         self.negative_rate = self.args.negative_rate
         self.use_cuda = self.args.use_cuda
         self.graph_dict_train = model.graph_dict_train
-        self.occurred_entity_positive_mask = model.occurred_entity_positive_mask
         self.get_true_hear_and_tail()
 
     def get_true_hear_and_tail(self):
@@ -53,7 +52,10 @@ class CorruptTriples:
         negative_sample_size = 0
         while negative_sample_size < negative_rate:
             # import pdb; pdb.set_trace()
-            negative_sample = np.random.choice(self.model.known_entities, size=negative_rate)
+            if self.args.negative_sample_all_entities:
+                negative_sample = np.random.randint(self.model.num_ents, size=negative_rate)
+            else:
+                negative_sample = np.random.choice(self.model.known_entities, size=negative_rate)
             true_entities = other_true_entities[(s, r)] if corrupt_tail else other_true_entities[(r, o)]
             mask = np.in1d(
                 negative_sample,

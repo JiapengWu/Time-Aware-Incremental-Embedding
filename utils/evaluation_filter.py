@@ -7,11 +7,11 @@ class EvaluationFilter:
     def __init__(self, model):
         self.model = model
         self.args = model.args
+        self.negative_sample_all_entities = self.args.negative_sample_all_entities
         self.calc_score = model.calc_score
         self.graph_dict_train = model.graph_dict_train
         self.graph_dict_val = model.graph_dict_val
         self.graph_dict_test = model.graph_dict_test
-        self.occurred_entity_positive_mask = model.occurred_entity_positive_mask
         self.graph_dict_total = {**self.graph_dict_train, **self.graph_dict_val, **self.graph_dict_test}
         self.get_true_head_and_tail_all()
 
@@ -32,26 +32,25 @@ class EvaluationFilter:
             self.true_heads[t] = true_head
             self.true_tails[t] = true_tail
 
-    def calc_metrics_single_graph(self, ent_embeddings, rel_embeddings, all_ent_embeds, samples, id_dict, time, eval_bz=100):
+    def calc_metrics_single_graph(self, ent_embeddings, rel_embeddings, all_ent_embeds, samples, local2global, time, global2known, eval_bz=100):
         with torch.no_grad():
             s = samples[:, 0]
             r = samples[:, 1]
             o = samples[:, 2]
             test_size = samples.shape[0]
             # num_ent = all_ent_embeds.shape[0]
-            global2local = dict({n: i for i, n in enumerate(self.model.known_entities)})
-            o_mask = self.mask_eval_set(samples, test_size, time, id_dict, global2local, mode="tail")
-            s_mask = self.mask_eval_set(samples, test_size, time, id_dict, global2local, mode="head")
-            # import pdb; pdb.set_trace()
+            o_mask = self.mask_eval_set(samples, test_size, time, local2global, global2known, mode="tail")
+            s_mask = self.mask_eval_set(samples, test_size, time, local2global, global2known, mode="head")
+
             # perturb object
-            ranks_o = self.perturb_and_get_rank(ent_embeddings, rel_embeddings, s, r, o, test_size, o_mask, id_dict, global2local, eval_bz, mode='tail')
+            ranks_o = self.perturb_and_get_rank(ent_embeddings, rel_embeddings, s, r, o, test_size, o_mask, local2global, global2known, eval_bz, mode='tail')
             # perturb subject
-            ranks_s = self.perturb_and_get_rank(ent_embeddings, rel_embeddings, s, r, o, test_size, s_mask, id_dict, global2local, eval_bz, mode='head')
+            ranks_s = self.perturb_and_get_rank(ent_embeddings, rel_embeddings, s, r, o, test_size, s_mask, local2global, global2known, eval_bz, mode='head')
             ranks = torch.cat([ranks_s, ranks_o])
             ranks += 1 # change to 1-indexed
         return ranks
 
-    def perturb_and_get_rank(self, ent_mean, rel_enc_means, s, r, o, test_size, mask, id_dict, global2local, batch_size=100, mode ='tail'):
+    def perturb_and_get_rank(self, ent_mean, rel_enc_means, s, r, o, test_size, mask, local2global, global2known, batch_size=100, mode ='tail'):
         """ Perturb one element in the triplets
         """
         # reduction_dict: from global id to reduced id
@@ -65,35 +64,42 @@ class EvaluationFilter:
             if self.calc_score.__name__ != 'ATiSE_score':
                 if mode == 'tail':
                     batch_s = ent_mean[s[batch_start: batch_end]]
-                    batch_o = self.model.reduced_entity_embedding
+                    batch_o = self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
                     target = o[batch_start: batch_end]
                 else:
-                    batch_s = self.model.reduced_entity_embedding
+                    batch_s = self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
                     batch_o = ent_mean[o[batch_start: batch_end]]
                     target = s[batch_start: batch_end]
 
-                target = torch.tensor([global2local[id_dict[i.item()]] for i in target])
+                # target: local -> global -> known
+                if self.negative_sample_all_entities:
+                    target = torch.tensor([local2global[i.item()] for i in target])
+                else:
+                    target = torch.tensor([global2known[local2global[i.item()]] for i in target])
 
                 if self.args.use_cuda:
                     target = cuda(target, self.args.n_gpu)
-
                 unmasked_score = self.calc_score(batch_s, batch_r, batch_o, mode=mode)
             else:
                 if mode == 'tail':
                     batch_s = ent_mean[s[batch_start: batch_end]]
                     batch_s_cov = self.model.eval_ent_cov_embed[s[batch_start: batch_end]]
-                    batch_o = self.model.reduced_entity_embedding
-                    batch_o_cov = self.model.reduced_entity_cov_embedding
+                    batch_o =  self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
+                    batch_o_cov = self.model.sigma_ent if self.negative_sample_all_entities else self.model.reduced_entity_cov_embedding
                     target = o[batch_start: batch_end]
                 else:
-                    batch_s = self.model.reduced_entity_embedding
-                    batch_s_cov = self.model.reduced_entity_cov_embedding
+                    batch_s = self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
+                    batch_s_cov = self.model.sigma_ent if self.negative_sample_all_entities else self.model.reduced_entity_cov_embedding
                     batch_o = ent_mean[o[batch_start: batch_end]]
                     batch_o_cov = self.model.eval_ent_cov_embed[o[batch_start: batch_end]]
                     target = s[batch_start: batch_end]
 
                 barch_r_cov = self.model.sigma_rel[r[batch_start: batch_end]]
-                target = torch.tensor([global2local[id_dict[i.item()]] for i in target])
+
+                if self.negative_sample_all_entities:
+                    target = torch.tensor([local2global[i.item()] for i in target])
+                else:
+                    target = torch.tensor([global2known[local2global[i.item()]] for i in target])
 
                 if self.args.use_cuda:
                     target = cuda(target, self.args.n_gpu)
@@ -103,26 +109,37 @@ class EvaluationFilter:
             masked_score = torch.where(mask[batch_start: batch_end], -10e6 * unmasked_score.new_ones(unmasked_score.shape), unmasked_score)
             score = torch.sigmoid(masked_score)  # bsz, n_ent
             ranks.append(sort_and_rank(score, target))
-        # print("Number of evaluated entities: ".format(score.shape[1]))
+
         return torch.cat(ranks)
 
-    def mask_eval_set(self, test_triplets, test_size, time, id_dict, global2local, mode='tail'):
-        # time = int(time.item())
-        # len(self.known_entities)
-        mask = test_triplets.new_zeros(test_size, len(global2local))
+    def mask_eval_set(self, test_triplets, test_size, time, local2global, global2known, mode='tail'):
+        mask = test_triplets.new_zeros(test_size, self.model.num_ents if self.negative_sample_all_entities else len(global2known))
+
         # filter setting
         for i in range(test_size):
-            h, r, t = test_triplets[i]
-            h, r, t = h.item(), r.item(), t.item()
+            s, r, o = test_triplets[i]
+            s, r, o = s.item(), r.item(), o.item()
+            # true subject or true object: local -> global -> known
             if mode == 'tail':
-                tails = self.true_tails[time][(h, r)]
-                tail_idx = np.array(list(map(lambda x: global2local[id_dict[x]], tails)))
-                # import pdb; pdb.set_trace()
-                mask[i][tail_idx] = 1
-                mask[i][global2local[id_dict[t]]] = 0
+                tails = self.true_tails[time][(s, r)]
+                if self.negative_sample_all_entities:
+                    tail_idx = np.array(list(map(lambda x: local2global[x], tails)))
+                    mask[i][tail_idx] = 1
+                    mask[i][local2global[o]] = 0
+                else:
+                    tail_idx = np.array(list(map(lambda x: global2known[local2global[x]], tails)))
+                    mask[i][tail_idx] = 1
+                    mask[i][global2known[local2global[o]]] = 0
+
             elif mode == 'head':
-                heads = self.true_heads[time][(r, t)]
-                head_idx = np.array(list(map(lambda x: global2local[id_dict[x]], heads)))
-                mask[i][head_idx] = 1
-                mask[i][global2local[id_dict[h]]] = 0
+                heads = self.true_heads[time][(r, o)]
+                if self.negative_sample_all_entities:
+                    head_idx = np.array(list(map(lambda x: local2global[x], heads)))
+                    mask[i][head_idx] = 1
+                    mask[i][local2global[s]] = 0
+                else:
+                    head_idx = np.array(list(map(lambda x: global2known[local2global[x]], heads)))
+                    mask[i][head_idx] = 1
+                    mask[i][global2known[local2global[s]]] = 0
+
         return mask.byte()

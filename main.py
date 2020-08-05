@@ -8,29 +8,44 @@ from baselines.StaticRGCN import StaticRGCN
 import time
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping
-from utils.utils import MyTestTubeLogger
+from utils.utils import MyTestTubeLogger, get_know_entities_per_time_step
 import json
 from pytorch_lightning.callbacks import ModelCheckpoint
 import torch
 import sys
 import glob
 
+
 if __name__ == '__main__':
     args = process_args()
+    debug = args.debug
+    fast = args.fast
+    overfit = args.overfit
     torch.manual_seed(args.seed)
 
     if args.config:
         args_json = json.load(open(args.config))
-        args.__dict__.update_eval_metrics(dict(args_json))
+        args.__dict__.update(dict(args_json))
+        args.debug = debug
+        args.fast = fast
+        args.overfit = overfit
 
     use_cuda = args.use_cuda = len(args.n_gpu) >= 0 and torch.cuda.is_available() and not args.cpu
     args.n_gpu = 0 if args.cpu else args.n_gpu
-    name = "{}-{}-{}-{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1], args.score_function,
-                                        args.train_seq_len,
-                                        "-multi-step" if args.multi_step else "",
+    name = "{}-{}-{}-patience-{}-{}{}{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1],
+                                        args.score_function, args.patience,
                                         "-addition" if args.addition else "",
+                                        "-multi-step" if args.multi_step else "",
+                                        '-length-{}'.format(args.train_seq_len) if args.multi_step else '',
+                                        '-kd-factor-{}'.format(args.kd_factor) if args.kd else '',
                                         "-debug" if args.debug else "",
-                                        "-overfit" if args.overfit else "")
+                                        "-overfit" if args.overfit else "",
+                                        "-cold-start" if args.cold_start else "",
+
+                                        )
+
+    # print(json.dumps(args.__dict__, indent=2, sort_keys=True))
+    # exit()
 
     version = time.strftime('%Y%m%d%H%M')
     log_file_out = "logs/log-{}-{}".format(name, version)
@@ -39,7 +54,6 @@ if __name__ == '__main__':
     if not args.debug:
         sys.stdout = open(log_file_out, 'w')
         sys.stderr = open(log_file_err, 'w')
-
     tt_logger = MyTestTubeLogger(
         save_dir="experiments",
         name=name,
@@ -62,19 +76,20 @@ if __name__ == '__main__':
               "SRGCN": StaticRGCN
               }[args.module]
 
-    print("Model checkpoint path: {}".format(args.base_path))
+    print(args.base_path)
     print(args)
 
-    if not args.debug:
-        tt_logger.log_hyperparams(args)
-        tt_logger.save()
+    tt_logger.log_args(args)
+    tt_logger.save()
 
     model = module(args, num_ents, num_rels, graph_dict_train, graph_dict_val, graph_dict_test)
     if args.load_base_model:
         base_model_path = glob.glob(os.path.join(args.base_model_path, "*.ckpt"))[0]
         base_model_checkpoint = torch.load(base_model_path, map_location=lambda storage, loc: storage)
-        # import pdb; pdb.set_trace()
         model.load_state_dict(base_model_checkpoint['state_dict'], strict=False)
+
+    inference_know_entities = get_know_entities_per_time_step(graph_dict_train, num_ents)
+    model.set_known_entities_per_time_step(inference_know_entities)
 
     end_time_step = min(len(total_time), args.end_time_step + 1)
     for time in range(args.start_time_step, end_time_step):
@@ -105,7 +120,9 @@ if __name__ == '__main__':
                           early_stop_callback=early_stop_callback,
                           overfit_batches=1 if args.overfit else 0,
                           show_progress_bar=True,
-                          checkpoint_callback=checkpoint_callback)
+                          # print_nan_grads=True,
+                          checkpoint_callback=checkpoint_callback
+                          )
 
         model.on_time_step_start(time)
         trainer.fit(model)

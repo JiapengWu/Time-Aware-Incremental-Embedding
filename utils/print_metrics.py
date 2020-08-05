@@ -2,7 +2,6 @@ import pickle
 import sys
 import pdb
 import os
-import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
     fname = os.path.join(sys.argv[1], "metrics-per-snapshot.pt")

@@ -15,6 +15,8 @@ class DiachronicEmbedding(TKG_Embedding):
         self.w_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.temporal_embed_size))
         self.b_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.temporal_embed_size))
 
+    def init_parameters(self):
+        super(DiachronicEmbedding, self).init_parameters()
         nn.init.xavier_uniform_(self.w_temp_ent_embeds, gain=nn.init.calculate_gain('relu'))
         nn.init.xavier_uniform_(self.b_temp_ent_embeds, gain=nn.init.calculate_gain('relu'))
 
