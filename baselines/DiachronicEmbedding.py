@@ -11,10 +11,11 @@ class DiachronicEmbedding(TKG_Embedding):
             self.old_w_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size), requires_grad=False)
             self.old_b_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_rels * 2, self.embed_size), requires_grad=False)
 
+
     def load_old_parameters(self):
         super(DiachronicEmbedding, self).load_old_parameters()
-        self.old_w_temp_ent_embeds = self.w_temp_ent_embeds.data.clone()
-        self.old_b_temp_ent_embeds = self.b_temp_ent_embeds.data.clone()
+        self.old_w_temp_ent_embeds.data = self.w_temp_ent_embeds.data.clone()
+        self.old_b_temp_ent_embeds.data = self.b_temp_ent_embeds.data.clone()
 
     def build_model(self):
         self.static_embed_size = math.floor(0.5 * self.embed_size)
@@ -24,6 +25,7 @@ class DiachronicEmbedding(TKG_Embedding):
         self.b_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.temporal_embed_size))
 
     def init_parameters(self):
+        super(DiachronicEmbedding, self).init_parameters()
         nn.init.xavier_uniform_(self.w_temp_ent_embeds, gain=nn.init.calculate_gain('relu'))
         nn.init.xavier_uniform_(self.b_temp_ent_embeds, gain=nn.init.calculate_gain('relu'))
 

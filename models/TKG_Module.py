@@ -59,9 +59,6 @@ class TKG_Module(LightningModule):
     def init_metrics_collection(self):
         self.accumulative_val_result = {"mrr": 0, "hit_1": 0, "hit_3": 0, "hit_10": 0, "all_ranks": None}
         self.metrics_collector = metric_collection(self.args.base_path)
-        self.epoch_time = 0
-        # self.epoch_start_event = torch.cuda.Event(enable_timing=True)
-        # self.epoch_end_event = torch.cuda.Event(enable_timing=True)
         self.epoch_time_gauge = counter_gauge()
 
     def init_parameters(self):
@@ -100,8 +97,6 @@ class TKG_Module(LightningModule):
         self.epoch_time = 0
 
     def on_epoch_end(self):
-        print(self.epoch_time)
-        # import pdb; pdb.set_trace()
         self.epoch_time_gauge.add(self.epoch_time)
 
     def on_batch_end(self):

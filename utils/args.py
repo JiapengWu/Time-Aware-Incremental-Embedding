@@ -65,7 +65,7 @@ def process_args():
     dataset = args.dataset
     args.dataset = os.path.join(args.dataset_dir, args.dataset)
     if args.load_base_model:
-        args.base_model_path = "experiments/base-model/{}-{}".format(args.module, dataset)
+        args.base_model_path = "/media/data/jiapeng-yishi/experiments/base-model/{}-{}".format(args.module, dataset)
         args.start_time_step = 1
         print(args.base_model_path)
     return args

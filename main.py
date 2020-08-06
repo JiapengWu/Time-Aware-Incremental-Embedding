@@ -54,7 +54,7 @@ if __name__ == '__main__':
         sys.stdout = open(log_file_out, 'w')
         sys.stderr = open(log_file_err, 'w')
     tt_logger = MyTestTubeLogger(
-        save_dir="experiments",
+        save_dir="/media/data/jiapeng-yishi/experiments",
         name=name,
         debug=False,
         version=version,
@@ -127,5 +127,4 @@ if __name__ == '__main__':
         trainer.use_ddp = False
         model.load_best_checkpoint()
         test_res = trainer.test(model=model)
-        # trainer.use_ddp = True
         model.on_time_step_end()
