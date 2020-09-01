@@ -7,6 +7,15 @@ import math
 class DiachronicEmbedding(TKG_Embedding):
     def __init__(self, args, num_ents, num_rels, graph_dict_train, graph_dict_val, graph_dict_test):
         super(DiachronicEmbedding, self).__init__(args, num_ents, num_rels, graph_dict_train, graph_dict_val, graph_dict_test)
+        if self.self_kd:
+            self.old_w_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size), requires_grad=False)
+            self.old_b_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_rels * 2, self.embed_size), requires_grad=False)
+
+
+    def load_old_parameters(self):
+        super(DiachronicEmbedding, self).load_old_parameters()
+        self.old_w_temp_ent_embeds.data = self.w_temp_ent_embeds.data.clone()
+        self.old_b_temp_ent_embeds.data = self.b_temp_ent_embeds.data.clone()
 
     def build_model(self):
         self.static_embed_size = math.floor(0.5 * self.embed_size)

@@ -38,7 +38,6 @@ class EvaluationFilter:
             r = samples[:, 1]
             o = samples[:, 2]
             test_size = samples.shape[0]
-            # num_ent = all_ent_embeds.shape[0]
             o_mask = self.mask_eval_set(samples, test_size, time, local2global, global2known, mode="tail")
             s_mask = self.mask_eval_set(samples, test_size, time, local2global, global2known, mode="head")
 

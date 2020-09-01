@@ -8,7 +8,6 @@ import torch
 import pdb
 import torch.nn as nn
 
-
 def build_sampled_graph_from_triples(triples, train_graph):
     sample_idx = np.random.choice(np.arange(len(triples)), size=int(0.5 * len(triples)), replace=False)
     return build_graph_from_triples(triples[sample_idx], train_graph)
@@ -27,23 +26,23 @@ def build_graph_from_triples(triples, train_graph):
     return g
 
 
-def get_edges(g):
-    triples = torch.stack([g.edges()[0], g.edata['type_s'], g.edges()[1]]).transpose(0, 1)
-    return triples, [(g.ids[s], r, g.ids[o]) for s, r, o in triples.tolist()]
-
-
 def sort_and_rank(score, target):
-    # pdb.set_trace()
     _, indices = torch.sort(score, dim=1, descending=True)
     indices = torch.nonzero(indices == target.view(-1, 1))
     indices = indices[:, 1].view(-1)
     return indices
 
-def edge_difference(pre_edges, cur_edges, time=None):
-    pre_ind_dict = {k: i for i, k in enumerate(pre_edges)}
-    cur_ind_dict = {k: i for i, k in enumerate(cur_edges)}
-    pre_set = set(pre_edges)
-    cur_set = set(cur_edges)
+
+def get_edges(g):
+    triples = torch.stack([g.edges()[0], g.edata['type_s'], g.edges()[1]]).transpose(0, 1)
+    return triples, [(g.ids[s], r, g.ids[o]) for s, r, o in triples.tolist()]
+
+
+def edge_difference(pre_edges_global, cur_edges_global, time=None):
+    pre_ind_dict = {k: i for i, k in enumerate(pre_edges_global)}
+    cur_ind_dict = {k: i for i, k in enumerate(cur_edges_global)}
+    pre_set = set(pre_edges_global)
+    cur_set = set(cur_edges_global)
     added = cur_set - pre_set
     deleted = pre_set - cur_set
     added_idx = [cur_ind_dict[x] for x in added]
@@ -64,27 +63,29 @@ def sanity_check(graph_dict_train):
 
 def get_add_del_graph(graph_dict_train):
     # sanity_check(graph_dict_train)
-    last_graph = last_triples = last_edges = None
-
+    # last_graph = last_edges_local_id
+    last_edges_global_id = None
     appended_graphs = {}
-    deleted_graphs = {}
+    deleted_edges_dict = {}
 
     for time, g in graph_dict_train.items():
-        cur_triples, cur_edges = get_edges(g)
-        if not last_edges:
+        cur_edges_local, cur_edges_global = get_edges(g)
+        if type(last_edges_global_id) == type(None):
             appended_graphs[time] = g
-            deleted_graphs[time] = None
+            deleted_edges_dict[time] = None
         else:
-            added_idx, deleted_idx = edge_difference(last_edges, cur_edges, time)
-            appended_graph = build_graph_from_triples(cur_triples[added_idx], g)
-            deleted_graph = build_graph_from_triples(last_triples[deleted_idx], last_graph)
+            added_idx, deleted_idx = edge_difference(last_edges_global_id, cur_edges_global, time)
+            appended_graph = build_graph_from_triples(cur_edges_local[added_idx], g)
+            deleted_edges_global = torch.tensor(last_edges_global_id)[deleted_idx]
             appended_graphs[time] = appended_graph
-            deleted_graphs[time] = deleted_graph
-        last_edges = cur_edges
-        last_triples = cur_triples
-        last_graph = g
+            # pdb.set_trace()
+            deleted_edges_dict[time] = deleted_edges_global
 
-    return appended_graphs, deleted_graphs
+        last_edges_global_id = cur_edges_global
+        # last_edges_local_id = cur_edges_local_id
+        # last_graph = g
+
+    return appended_graphs, deleted_edges_dict
 
 
 def move_dgl_to_cuda(g, device):
