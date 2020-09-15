@@ -4,4 +4,6 @@ experiments
 **/__pycache__/
 *_graphs.txt
 .idea/
-interpolation/icews14/
+analysis/
+baselines/Hyte.py
+baselines/Simple.py

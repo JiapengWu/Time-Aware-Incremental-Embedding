@@ -22,10 +22,9 @@ def get_args():
     parser.add_argument("--gradient-clip-val", type=float, default=1.0)
     parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--n-bases", type=int, default=128, help="number of weight blocks for each relation")
-    parser.add_argument("--train-seq-len", type=int, default=0)
-    parser.add_argument("--test-seq-len", type=int, default=30)
+
     parser.add_argument("--train-batch-size", type=int, default=2048)
-    parser.add_argument("--test-batch-size", type=int, default=10000)
+    parser.add_argument("--test-batch-size", type=int, default=100)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--negative-rate", type=int, default=500)
     parser.add_argument('--log-gpu-memory', action='store_true')
@@ -35,18 +34,44 @@ def get_args():
 
     parser.add_argument('--inference', action='store_true')
     parser.add_argument('--multi-step-inference', action='store_true')
+    parser.add_argument('--deleted-edges-inference', action='store_true')
     parser.add_argument('--prediction-file-path',type=str, default='')
     parser.add_argument('--analysis', action='store_true')
 
     parser.add_argument("--overfit", action='store_true')
     parser.add_argument("--negative-sample-all-entities", action='store_true')
 
-    parser.add_argument("--multi-step", action='store_true')
+    parser.add_argument("--train-base-model", action='store_true')
     parser.add_argument("--addition", action='store_true')
     parser.add_argument("--deletion", action='store_true')
 
-    parser.add_argument("--kd-factor", type=float, default=1)
-    parser.add_argument("--self-kd", action='store_true', help='use knowledge distillation')
+    # reservoir sampling parameters
+
+    parser.add_argument("--all-prev-time-steps", action='store_true')
+
+    # positive vs negative entities vs negative relations
+    parser.add_argument("--sample-positive", action='store_true')
+    parser.add_argument("--sample-neg-entity", action='store_true')
+    parser.add_argument("--sample-neg-relation", action='store_true')
+    parser.add_argument("--negative-rate-reservoir", type=int, default=50)
+
+    # history versus present
+    parser.add_argument("--historical-sampling", action='store_true')
+    parser.add_argument("--train-seq-len", type=int, default=10)
+    parser.add_argument("--num-samples-each-time-step", type=int, default=1000)
+    parser.add_argument("--present-sampling", action='store_true')
+    parser.add_argument("--one-hop-positive-sampling", action='store_true')
+    parser.add_argument("--max-num-pos-samples", type=float, default=2048)
+
+    # after reservoir sampling, decide whether to use KD loss, CE loss or both
+    parser.add_argument("--KD-reservoir", action='store_true')
+    parser.add_argument("--CE-reservoir", action='store_true')
+
+    # KD parameters
+    parser.add_argument("--self-kd-factor", type=float, default=1)
+    parser.add_argument("--up-weight-factor", type=float, default=1)
+
+    parser.add_argument("--self-kd", action='store_true', help='use self knowledge distillation')
     parser.add_argument("--load-base-model", action='store_true', help='load a base model')
     parser.add_argument("--base-model-path", action='store_true', help='path of the base model')
     parser.add_argument("--start-time-step", type=int, default=0)
@@ -64,8 +89,19 @@ def process_args():
     args = get_args()
     dataset = args.dataset
     args.dataset = os.path.join(args.dataset_dir, args.dataset)
+
+    assert not (args.sample_positive and args.sample_neg_entity)
+    assert not (args.sample_positive and args.sample_neg_relation)
+    assert not (args.addition and args.present_sampling)
+
+    if args.KD_reservoir or args.CE_reservoir:
+        assert args.historical_sampling or args.present_sampling
+        assert args.sample_positive or args.sample_neg_entity or args.sample_neg_relation
+
     if args.load_base_model:
         args.base_model_path = "/media/data/jiapeng-yishi/experiments/base-model/{}-{}".format(args.module, dataset)
-        args.start_time_step = 1
+        args.start_time_step = 68 if dataset == 'wiki' else 50
         print(args.base_model_path)
+    if args.cold_start:
+        args.load_base_model = False
     return args

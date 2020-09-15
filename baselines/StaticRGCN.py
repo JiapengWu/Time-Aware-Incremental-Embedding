@@ -23,7 +23,7 @@ class StaticRGCN(TKG_Module):
             self.eval_all_embeds_g = self.get_all_embeds_Gt(self.eval_ent_embed)
 
         if triples.shape[0] == 0:
-            return self.cuda(torch.tensor([]).long(), self.args.n_gpu) if self.use_cuda else torch.tensor([]).long(), 0
+            return self.cuda(torch.tensor([]).long(), self.n_gpu) if self.use_cuda else torch.tensor([]).long(), 0
 
         id_dict = self.train_graph.ids
         rank = self.evaluater.calc_metrics_single_graph(self.eval_ent_embed, self.rel_embeds, self.eval_all_embeds_g, triples, id_dict, self.time)
@@ -51,7 +51,7 @@ class StaticRGCN(TKG_Module):
         # g = self.train_graph
         g.ndata['h'] = self.ent_embeds[g.ndata['id']].view(-1, self.embed_size)
         if self.use_cuda:
-            move_dgl_to_cuda(g, self.args.n_gpu)
+            move_dgl_to_cuda(g, self.n_gpu)
         enc_ent_mean_graph = self.ent_encoder(g, self.time)
         ent_enc_embeds = enc_ent_mean_graph.ndata['h']
         return ent_enc_embeds

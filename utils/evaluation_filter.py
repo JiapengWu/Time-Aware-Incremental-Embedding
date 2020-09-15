@@ -1,5 +1,5 @@
 import torch
-from utils.utils import cuda, get_true_head_and_tail_per_graph, sort_and_rank
+from utils.utils import cuda, get_true_subject_and_object_per_graph, sort_and_rank
 import numpy as np
 
 
@@ -13,9 +13,11 @@ class EvaluationFilter:
         self.graph_dict_val = model.graph_dict_val
         self.graph_dict_test = model.graph_dict_test
         self.graph_dict_total = {**self.graph_dict_train, **self.graph_dict_val, **self.graph_dict_test}
-        self.get_true_head_and_tail_all()
+        self.get_true_subject_and_object_all()
+        # if self.args.train_base_model:
+        #     self.get_true_subject_and_object_global()
 
-    def get_true_head_and_tail_all(self):
+    def get_true_subject_and_object_all(self):
         self.true_heads = dict()
         self.true_tails = dict()
         times = list(self.graph_dict_total.keys())
@@ -28,7 +30,7 @@ class EvaluationFilter:
                 for g in self.graph_dict_train[t], self.graph_dict_val[t], self.graph_dict_test[t]:
                     triples.append(torch.stack([g.edges()[0], g.edata['type_s'], g.edges()[1]]).transpose(0, 1))
                 triples = torch.cat(triples, dim=0)
-            true_head, true_tail = get_true_head_and_tail_per_graph(triples)
+            true_head, true_tail = get_true_subject_and_object_per_graph(triples)
             self.true_heads[t] = true_head
             self.true_tails[t] = true_tail
 
@@ -79,6 +81,8 @@ class EvaluationFilter:
 
             if self.args.use_cuda:
                 target = cuda(target, self.args.n_gpu)
+
+            # import pdb; pdb.set_trace()
             unmasked_score = self.calc_score(batch_s, batch_r, batch_o, mode=mode)
             # mask: 1 for local id
             masked_score = torch.where(mask[batch_start: batch_end], -10e6 * unmasked_score.new_ones(unmasked_score.shape), unmasked_score)
@@ -95,6 +99,7 @@ class EvaluationFilter:
             s, r, o = test_triplets[i]
             s, r, o = s.item(), r.item(), o.item()
             # true subject or true object: local -> global -> known
+
             if mode == 'tail':
                 tails = self.true_tails[time][(s, r)]
                 if self.negative_sample_all_entities:

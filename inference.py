@@ -9,17 +9,29 @@ import glob
 import json
 import pickle
 import os.path
-from utils.utils import get_metrics
+from utils.utils import get_metrics, get_add_del_graph
 
 
 def get_predictions(quadruples, ranks):
     predictions = []
-    for i in range(len(quadruples)):
+    num_quadruples = len(quadruples)
+    for i in range(num_quadruples):
         s, r, o, t = quadruples[i]
         s, r, o, t = s.item(), r.item(), o.item(), t.item()
         idx_dict = graph_dict_val[t].ids
-        predictions.append([idx_dict[s], r, idx_dict[o], t, 'tail', ranks[2 * i]])
-        predictions.append([idx_dict[s], r, idx_dict[o], t, 'head', ranks[2 * i + 1]])
+        predictions.append([idx_dict[s], r, idx_dict[o], t, 'head', ranks[i]])
+        predictions.append([idx_dict[s], r, idx_dict[o], t, 'tail', ranks[num_quadruples + i]])
+    return predictions
+
+
+def get_predictions_at_time(triples, ranks, time):
+    predictions = []
+    num_triples = len(triples)
+    for i in range(num_triples):
+        s, r, o = triples[i]
+        s, r, o = s.item(), r.item(), o.item()
+        predictions.append([s, r, o, time, 'head', ranks[i]])
+        predictions.append([s, r, o, time, 'tail', ranks[num_triples + i]])
     return predictions
 
 
@@ -30,7 +42,33 @@ def get_quadruples(graph_dict, time):
     return quadruples.cuda(gpus[0]) if use_cuda else quadruples
 
 
-def single_step_inference(time2checkpoint, model, prediction_path_prefix):
+def deleted_edges_inference(time2checkpoint, model):
+    prediction_file = os.path.join(experiment_path, "deleted-edges-predictions.pk")
+    _, deleted_edges_dict = get_add_del_graph(graph_dict_train)
+    all_time_predictions = []
+    for time, checkpoint_path in time2checkpoint.items():
+        if time == 1:
+            continue
+        checkpoint = torch.load(checkpoint_path, map_location=lambda storage, loc: storage)
+        model.load_state_dict(checkpoint['state_dict'], strict=False)
+        model.on_load_checkpoint(checkpoint)
+        model.on_time_step_start(time)
+        triples = deleted_edges_dict[time]
+        # quadruples = torch.cat([quadruples, torch.zeros(quadruples.shape[0])], dim=1)
+        ranks = model.eval_global_idx(triples)
+        predictions = get_predictions_at_time(triples, ranks, time)
+        mrr, hit_1, hit_3, hit_10 = get_metrics(ranks)
+        print("Deleted edges metrics at time step {}, MRR: {}, hit 1: {}, hit 3: {}, hit 10: {}"
+              .format(time, mrr.item(), hit_1.item(), hit_3.item(), hit_10.item()))
+        all_time_predictions.extend(predictions)
+
+    with open(prediction_file, 'wb') as filehandle:
+        pickle.dump(all_time_predictions, filehandle)
+
+    return all_time_predictions
+
+
+def single_step_inference(time2checkpoint, model):
     prediction_file = os.path.join(experiment_path, "predictions.pk")
     print(prediction_file)
     all_time_predictions = []
@@ -53,7 +91,7 @@ def single_step_inference(time2checkpoint, model, prediction_path_prefix):
     return all_time_predictions
 
 
-def multi_step_inference(time2checkpoint, model, prediction_path_prefix):
+def multi_step_inference(time2checkpoint, model):
     prediction_file = os.path.join(experiment_path, "multi-step-predictions.pk")
     metrics = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
     for time, checkpoint_path in time2checkpoint.items():
@@ -93,12 +131,11 @@ def inference():
             continue
     # time2checkpoint = dict(zip(time_steps, checkpoint_paths))
     time2checkpoint = dict(sorted(time2checkpoint.items(), key=lambda kv: kv[0]))
-    prediction_path_prefix = "-".join(experiment_path.split('/')[1:])
+    # prediction_path_prefix = "-".join(experiment_path.split('/')[1:])
     args.inference = True
     args.n_gpu = gpus
 
-    num_ents, num_rels = get_total_number(args.dataset, 'stat.txt')
-
+    num_ents, num_rels, num_time_steps = get_total_number(args.dataset, 'stat.txt')
     module = {
               "Simple": SimplE,
               "Static": Static,
@@ -108,19 +145,22 @@ def inference():
               }[args.module]
 
     model = module(args, num_ents, num_rels, graph_dict_train, graph_dict_val, graph_dict_test)
-    model.get_know_entities_per_time_step()
+    model.get_known_entities_per_time_step()
     if use_cuda:
         model = model.cuda(gpus[0])
     if do_multi_step_inference:
-        multi_step_inference(time2checkpoint, model, prediction_path_prefix)
+        multi_step_inference(time2checkpoint, model)
     else:
-        single_step_inference(time2checkpoint, model, prediction_path_prefix)
+        if do_deleted_edges_inference:
+            deleted_edges_inference(time2checkpoint, model)
+        else:
+            single_step_inference(time2checkpoint, model)
 
 
 if __name__ == '__main__':
     args = process_args()
-    experiment_path, do_multi_step_inference, gpus, eval_on_test_set = \
-        args.checkpoint_path, args.multi_step_inference, args.n_gpu, args.eval_on_test_set
+    experiment_path, do_multi_step_inference, gpus, eval_on_test_set, do_deleted_edges_inference = \
+        args.checkpoint_path, args.multi_step_inference, args.n_gpu, args.eval_on_test_set, args.deleted_edges_inference
     use_cuda = args.use_cuda = len(args.n_gpu) >= 0 and torch.cuda.is_available()
 
     config_path = os.path.join(experiment_path, "config.json")

@@ -52,6 +52,8 @@ class counter_gauge:
         self.count += 1
 
     def get_mean(self):
+        if self.count == 0:
+            return 0
         return self.val_total / self.count
 
     def get_sum(self):

@@ -2,11 +2,13 @@ import numpy as np
 import os
 import pickle
 import dgl
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, ConcatDataset
 import torch
 from utils.args import process_args
-from utils.utils import node_norm_to_edge_norm, comp_deg_norm
+from utils.utils import node_norm_to_edge_norm, comp_deg_norm, sort_dict, get_true_subject_and_object_per_graph, cuda
 from collections import defaultdict
+from functools import reduce
+import pdb
 
 
 def load_quadruples(dataset_path, fileName, fileName2=None, fileName3=None):
@@ -55,9 +57,8 @@ def get_data_with_t(data, tim):
 
 def get_total_number(dataset_path, fileName="stat.txt"):
     with open(os.path.join(dataset_path, fileName), 'r') as fr:
-        for line in fr:
-            line_split = line.split()
-            return int(line_split[0]), int(line_split[1])
+        line_split = fr.readline().split()
+    return int(line_split[0]), int(line_split[1]), int(line_split[2])
 
 
 def get_big_graph(data, num_rels):
@@ -207,6 +208,27 @@ def load_quadruples_interpolation(dataset_path, train_fname, valid_fname, test_f
     return time2triples
 
 
+def load_quadruples_tensor(dataset_path, train_fname, valid_fname, test_fname):
+    time2quads_train = defaultdict(list)
+    time2quads_val = defaultdict(list)
+    time2quads_test = defaultdict(list)
+    for fname, time2quads in zip([train_fname, valid_fname, test_fname],
+                           [time2quads_train, time2quads_val, time2quads_test]):
+        with open(os.path.join(dataset_path, fname), 'r') as fr:
+            for line in fr:
+                line_split = line.split()
+                head = int(line_split[0])
+                rel = int(line_split[1])
+                tail = int(line_split[2])
+                time = int(line_split[3])
+                time2quads[time].append([head, rel, tail, time])
+    # pdb.set_trace()
+    for time2quads in time2quads_train, time2quads_val, time2quads_test:
+        for t in time2quads.keys():
+            time2quads[t] = torch.tensor(time2quads[t])
+    return sort_dict(time2quads_train), sort_dict(time2quads_val), sort_dict(time2quads_test)
+
+
 def get_per_entity_time_sequence(time2triples):
     interaction_time_sequence = defaultdict(set)
     for tim, triple_dict in time2triples.items():
@@ -217,8 +239,8 @@ def get_per_entity_time_sequence(time2triples):
     for k in interaction_time_sequence.keys():
         interaction_time_sequence[k] = sorted(list(interaction_time_sequence[k]))
 
-    # import pdb; pdb.set_trace()
     return interaction_time_sequence
+
 
 def build_interpolation_graphs_given_dataset(dataset):
     train_graph_dict_path = os.path.join(dataset, 'train_graphs.txt')
@@ -283,21 +305,12 @@ def id2entrel(dataset_path, num_rels):
     return id2ent, id2rel
 
 
+flatten = lambda l: [item for sublist in l for item in sublist]
+
+
 class FullBatchDataset(Dataset):
-    def __init__(self, graph_dict, time, train_seq_length):
-        self.init_multi_time_step(graph_dict, time, train_seq_length) \
-            if train_seq_length > 0 else self.init_single_time_step(graph_dict, time)
+    def __init__(self, graph_dict, time):
 
-    def init_multi_time_step(self, graph_dict, time, train_seq_length):
-        graphs = [graph_dict[i] for i in range(max(time - train_seq_length, 0), time + 1)]
-        times = list(range(max(time - train_seq_length, 0), time + 1))
-        full_triples = []
-        for graph, t in zip(graphs, times):
-            quadruples = self.get_quadruples(graph, t)
-            full_triples.append(quadruples)
-        self.quadruples = torch.cat(full_triples)
-
-    def init_single_time_step(self, graph_dict, time):
         graph = graph_dict[time]
         self.quadruples = self.get_quadruples(graph, time)
 
@@ -310,6 +323,56 @@ class FullBatchDataset(Dataset):
 
     def __len__(self):
         return len(self.quadruples)
+
+
+class BaseModelDataset(Dataset):
+    def __init__(self, time2triples, end_time_step):
+        # import pdb; pdb.set_trace()
+        self.quadruples = torch.cat([triples for time, triples in time2triples.items() if time < end_time_step])
+    def __getitem__(self, index):
+        return self.quadruples[index]
+
+    def __len__(self):
+        return len(self.quadruples)
+
+
+class ValDataset(Dataset):
+    def __init__(self, time2triples, time):
+        self.quadruples = torch.tensor(time2triples[time])
+
+    def __getitem__(self, index):
+        # pdb.set_trace()
+        return self.quadruples[index]
+
+    def __len__(self):
+        return len(self.quadruples)
+
+
+class TrainDataset(ValDataset):
+    def __init__(self, quadruples):
+        self.quadruples = quadruples
+
+
+class DataLoaderIterWrapper:
+    def __init__(self, data_loader_iters_dict):
+        self.data_loader_iters_dict = data_loader_iters_dict
+
+    def __next__(self):
+        next_data = {}
+        for key, data_loader_iters in self.data_loader_iters_dict.items():
+            next_data[key] = next(data_loader_iters)
+        return next_data
+
+    def __iter__(self):
+        return self
+
+
+class DataLoaderWrapper:
+    def __init__(self, dataloader_dict):
+        self.dataloader_dict = dataloader_dict
+
+    def __iter__(self):
+        return DataLoaderIterWrapper({key: dataloader.__iter__() for key, dataloader in self.dataloader_dict.items()})
 
 
 if __name__ == '__main__':

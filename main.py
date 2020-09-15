@@ -4,17 +4,15 @@ from utils.args import process_args
 from baselines.Static import Static
 from baselines.DiachronicEmbedding import DiachronicEmbedding
 from baselines.ATiSE import ATiSE
-from baselines.StaticRGCN import StaticRGCN
 import time
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping
-from utils.utils import MyTestTubeLogger, get_know_entities_per_time_step
+from utils.utils import MyTestTubeLogger, get_known_entities_per_time_step, get_known_relations_per_time_step
 import json
 from pytorch_lightning.callbacks import ModelCheckpoint
 import torch
 import sys
 import glob
-
 
 if __name__ == '__main__':
     args = process_args()
@@ -32,19 +30,34 @@ if __name__ == '__main__':
 
     use_cuda = args.use_cuda = len(args.n_gpu) >= 0 and torch.cuda.is_available() and not args.cpu
     args.n_gpu = 0 if args.cpu else args.n_gpu
-    torch.cuda.set_device(args.n_gpu[0])
-
-    name = "{}-{}-{}-patience-{}{}{}{}{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1],
-                                        args.score_function, args.patience,
+    if use_cuda:
+        torch.cuda.set_device(args.n_gpu[0])
+    name = "{}-{}-{}-patience-{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1],
+                                                             args.score_function, args.patience,
                                         "-addition" if args.addition else "",
                                         "-deletion" if args.deletion else "",
-                                        "-multi-step" if args.multi_step else "",
-                                        '-length-{}'.format(args.train_seq_len) if args.multi_step else '',
-                                        '-kd-factor-{}'.format(args.kd_factor) if args.self_kd else '',
+                                        "-up-weight-factor-{}".format(args.up_weight_factor) if args.deletion else "",
+                                                             # "-multi-step" if args.multi_step else "",
+                                                             # '-length-{}'.format(args.train_seq_len) if args.multi_step else '',
+                                        '-self-kd-factor-{}'.format(args.self_kd_factor) if args.self_kd else '',
                                         "-debug" if args.debug else "",
                                         "-overfit" if args.overfit else "",
                                         "-cold-start" if args.cold_start else "",
-                                        )
+                                        "-all-prev-time-steps" if args.all_prev_time_steps else ""
+                                        "-KD" if args.KD_reservoir else "",
+                                        "-CE" if args.CE_reservoir else "",
+                                        # "-reservoir" if args.KD_reservoir or args.CE_reservoir else "",
+                                        "-historical-sampling" if args.historical_sampling else "",
+                                        "-train-seq-len-{}".format(args.train_seq_len) if args.historical_sampling else "",
+                                        "-num-samples-each-time-step-{}".format(args.num_samples_each_time_step) if args.historical_sampling else "",
+                                        "-present-sampling" if args.present_sampling else "",
+                                        "-one-hop-positive-sampling" if args.one_hop_positive_sampling else "",
+                                        "-sample-positive" if args.sample_positive else "",
+                                        "-sample-neg-relation" if args.sample_neg_relation else "",
+                                        "-sample-neg-entity" if args.sample_neg_entity else "",
+                                        "-neg-rate-reservoir-{}".format(args.negative_rate_reservoir) if args.sample_neg_entity else "",
+                                    )
+    # TODO: adjust the naming function
 
     version = time.strftime('%Y%m%d%H%M')
     log_file_out = "logs/log-{}-{}".format(name, version)
@@ -63,35 +76,38 @@ if __name__ == '__main__':
 
     args.base_path = tt_logger.experiment.get_data_path(tt_logger.experiment.name, tt_logger.experiment.version)
 
-    num_ents, num_rels = get_total_number(args.dataset, 'stat.txt')
+    num_ents, num_rels, num_time_steps = get_total_number(args.dataset, 'stat.txt')
+    # graph_dict_train, graph_dict_val, graph_dict_test = build_interpolation_graphs(args)
 
-    graph_dict_train, graph_dict_val, graph_dict_test = build_interpolation_graphs(args)
-
-    total_time = np.array(list(graph_dict_train.keys()))
+    total_time = np.array(list(range(num_time_steps)))
+    # print(total_time)
     module = {
               "Static": Static,
               "DE": DiachronicEmbedding,
               "ATiSE": ATiSE,
-              "SRGCN": StaticRGCN
               }[args.module]
 
-    print(args.base_path)
+    print("\'{}\',".format(args.base_path))
     print(args)
 
     tt_logger.log_args(args)
     tt_logger.save()
 
-    model = module(args, num_ents, num_rels, graph_dict_train, graph_dict_val, graph_dict_test)
+    args.end_time_step = min(len(total_time), args.end_time_step + 1)
+    args.train_base_model = args.end_time_step < len(total_time)
+    # import pdb; pdb.set_trace()
+    # print(len(total_time))
+    # print(end_time_step)
+    # print(args.train_base_model)
+    # model = module(args, num_ents, num_rels, graph_dict_train, graph_dict_val, graph_dict_test)
+    model = module(args, num_ents, num_rels)
     if args.load_base_model:
         base_model_path = glob.glob(os.path.join(args.base_model_path, "*.ckpt"))[0]
         base_model_checkpoint = torch.load(base_model_path, map_location=lambda storage, loc: storage)
         model.load_state_dict(base_model_checkpoint['state_dict'], strict=False)
 
-    inference_know_entities = get_know_entities_per_time_step(graph_dict_train, num_ents)
-    model.set_known_entities_per_time_step(inference_know_entities)
 
-    end_time_step = min(len(total_time), args.end_time_step + 1)
-    for time in range(args.start_time_step, end_time_step):
+    for time in range(args.start_time_step, args.end_time_step):
         early_stop_callback = EarlyStopping(
             monitor='hit_10',
             min_delta=0.00,
@@ -122,9 +138,18 @@ if __name__ == '__main__':
                           # print_nan_grads=True,
                           checkpoint_callback=checkpoint_callback
                           )
-        model.on_time_step_start(time)
-        trainer.fit(model)
-        trainer.use_ddp = False
-        model.load_best_checkpoint()
-        test_res = trainer.test(model=model)
-        model.on_time_step_end()
+
+        if args.train_base_model:
+            model.on_time_step_start(time)
+            trainer.fit(model)
+            test_res = trainer.test(model=model)
+            model.on_time_step_end()
+            break
+        else:
+            model.on_time_step_start(time)
+            if not model.should_skip_training():
+                trainer.fit(model)
+                model.load_best_checkpoint()
+            trainer.use_ddp = False
+            test_res = trainer.test(model=model)
+            model.on_time_step_end()

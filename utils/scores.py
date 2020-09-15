@@ -11,7 +11,6 @@ def distmult(s, r, o, mode='single'):
     else:
         return torch.sum(s * r * o, dim=-1)
 
-
 def simple(head, head_inv, rel, rel_inv, tail, tail_inv, mode='tail'):
     if mode == 'tail':
         scores1 = torch.sum((head * rel).unsqueeze(1) * tail_inv, dim=-1)
@@ -25,6 +24,7 @@ def simple(head, head_inv, rel, rel_inv, tail, tail_inv, mode='tail'):
     return (scores1 + scores2) / 2
 
 
+# "head" means to corrupt head
 def complex(head, relation, tail, mode='single'):
     re_head, im_head = torch.chunk(head, 2, dim=-1)
     re_relation, im_relation = torch.chunk(relation, 2, dim=-1)
@@ -37,12 +37,17 @@ def complex(head, relation, tail, mode='single'):
         re_score = re_relation * re_tail + im_relation * im_tail
         im_score = re_relation * im_tail - im_relation * re_tail
         score = re_head * re_score.unsqueeze(1) + im_head * im_score.unsqueeze(1)
+    elif mode == 'relation':
+        # import pdb; pdb.set_trace()
+        re_score = re_head * re_tail + im_head * im_tail
+        im_score = re_head * im_tail - im_head * re_tail
+        score = re_relation * re_score.unsqueeze(1) + im_relation * im_score.unsqueeze(1)
     else:
         re_score = re_head * re_relation - im_head * im_relation
         im_score = re_head * im_relation + im_head * re_relation
         score = re_score * re_tail + im_score * im_tail
 
-    return score.sum(dim = -1)
+    return score.sum(dim=-1)
 
 
 def transE(head, relation, tail, mode='single'):
@@ -54,6 +59,7 @@ def transE(head, relation, tail, mode='single'):
         score = head + relation - tail
     score = - torch.norm(score, p=1, dim=-1)
     return score
+
 
 def ATiSE_score(head, relation, tail, mode='single'):
 
