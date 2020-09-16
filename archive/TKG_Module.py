@@ -6,11 +6,10 @@ from collections import OrderedDict
 from torch.utils.data import DataLoader
 from utils.dataset import FullBatchDataset
 from utils.dataset import BaseModelDataset
-from utils.CorruptTriples import CorruptTriples
+from archive.CorruptTriples import CorruptTriples
 from utils.CorruptTriplesGlobal import CorruptTriplesGlobal
 import torch.nn.functional as F
-from utils.evaluation_filter import EvaluationFilter
-from utils.evaluation_raw import EvaluationRaw
+from archive.evaluation_filter import EvaluationFilter
 from utils.evaluation_filter_global import EvaluationFilterGlobal
 from utils.metrics_collection import metric_collection, counter_gauge
 import torch.nn as nn

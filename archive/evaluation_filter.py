@@ -62,28 +62,50 @@ class EvaluationFilter:
             batch_end = min(test_size, (idx + 1) * batch_size)
             batch_r = rel_enc_means[r[batch_start: batch_end]]
 
-            # ent_mean[local_id] = self.eval_all_embeds_g[local2global[local_id]]
-            # reduced_entity_embedding[global2known[global_id]] = self.eval_all_embeds_g[global_id]
-            if mode == 'tail':
-                batch_s = ent_mean[s[batch_start: batch_end]]
-                batch_o = self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
-                target = o[batch_start: batch_end]
+            if self.calc_score.__name__ != 'ATiSE_score':
+                if mode == 'tail':
+                    batch_s = ent_mean[s[batch_start: batch_end]]
+                    batch_o = self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
+                    target = o[batch_start: batch_end]
+                else:
+                    batch_s = self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
+                    batch_o = ent_mean[o[batch_start: batch_end]]
+                    target = s[batch_start: batch_end]
+
+                # target: local -> global -> known
+                if self.negative_sample_all_entities:
+                    target = torch.tensor([local2global[i.item()] for i in target])
+                else:
+                    target = torch.tensor([global2known[local2global[i.item()]] for i in target])
+
+                if self.args.use_cuda:
+                    target = cuda(target, self.args.n_gpu)
+                unmasked_score = self.calc_score(batch_s, batch_r, batch_o, mode=mode)
             else:
-                batch_s = self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
-                batch_o = ent_mean[o[batch_start: batch_end]]
-                target = s[batch_start: batch_end]
+                if mode == 'tail':
+                    batch_s = ent_mean[s[batch_start: batch_end]]
+                    batch_s_cov = self.model.eval_ent_cov_embed[s[batch_start: batch_end]]
+                    batch_o =  self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
+                    batch_o_cov = self.model.sigma_ent if self.negative_sample_all_entities else self.model.reduced_entity_cov_embedding
+                    target = o[batch_start: batch_end]
+                else:
+                    batch_s = self.model.eval_all_embeds_g if self.negative_sample_all_entities else self.model.reduced_entity_embedding
+                    batch_s_cov = self.model.sigma_ent if self.negative_sample_all_entities else self.model.reduced_entity_cov_embedding
+                    batch_o = ent_mean[o[batch_start: batch_end]]
+                    batch_o_cov = self.model.eval_ent_cov_embed[o[batch_start: batch_end]]
+                    target = s[batch_start: batch_end]
 
-            # target: local -> global -> known
-            if self.negative_sample_all_entities:
-                target = torch.tensor([local2global[i.item()] for i in target])
-            else:
-                target = torch.tensor([global2known[local2global[i.item()]] for i in target])
+                barch_r_cov = self.model.sigma_rel[r[batch_start: batch_end]]
 
-            if self.args.use_cuda:
-                target = cuda(target, self.args.n_gpu)
+                if self.negative_sample_all_entities:
+                    target = torch.tensor([local2global[i.item()] for i in target])
+                else:
+                    target = torch.tensor([global2known[local2global[i.item()]] for i in target])
 
-            # import pdb; pdb.set_trace()
-            unmasked_score = self.calc_score(batch_s, batch_r, batch_o, mode=mode)
+                if self.args.use_cuda:
+                    target = cuda(target, self.args.n_gpu)
+                unmasked_score = self.calc_score(batch_s, batch_s_cov, batch_o, batch_o_cov, batch_r, barch_r_cov, mode=mode)
+
             # mask: 1 for local id
             masked_score = torch.where(mask[batch_start: batch_end], -10e6 * unmasked_score.new_ones(unmasked_score.shape), unmasked_score)
             score = torch.sigmoid(masked_score)  # bsz, n_ent

@@ -1,9 +1,8 @@
 from models.RGCN import RGCN
-import dgl
 import numpy as np
 from utils.utils import move_dgl_to_cuda
 from utils.scores import *
-from models.TKG_Module import TKG_Module
+from archive.TKG_Module import TKG_Module
 from utils.utils import build_sampled_graph_from_triples
 
 

@@ -1,10 +1,8 @@
-from models.TKG_Module import TKG_Module
-import time
+from archive.TKG_Module import TKG_Module
 import torch
 from utils.utils import cuda, mse_loss, collect_one_hot_neighbors
 import torch.nn.functional as F
 import time
-import pdb
 
 
 class TKG_Embedding(TKG_Module):

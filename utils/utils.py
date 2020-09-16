@@ -26,7 +26,9 @@ def build_graph_from_triples(triples, train_graph):
     g.ids = train_graph.ids
     return g
 
+
 sort_dict = lambda x: dict(sorted(x.items()))
+
 
 def sort_and_rank(score, target):
     _, indices = torch.sort(score, dim=1, descending=True)
@@ -308,19 +310,19 @@ def get_known_relations_per_time_step(graph_dict_train, num_rels):
     return all_known_relations
 
 
-def get_known_entities_relations_per_time_step_global(time2quads_train, time2quads_val, time2quads_test):
+def get_known_entities_relations_per_time_step_global(time2quads_train,
+                    time2quads_val, time2quads_test, num_ents, num_rels):
     all_known_entities = {}
     all_known_relations = {}
 
+    occurred_entity_positive_mask = np.zeros(num_ents)
+    occurred_relation_positive_mask = np.zeros(num_rels)
     for t in time2quads_train.keys():
-        known_entities = []
-        known_relations = []
         for quads in time2quads_train[t], time2quads_val[t], time2quads_test[t]:
             for quad in quads:
-                known_entities.extend([quad[0], quad[2]])
-                known_relations.append(quad[1])
-        # pdb.set_trace()
-        all_known_entities[t] = np.unique(known_entities)
-        all_known_relations[t] = np.unique(known_relations)
+                occurred_entity_positive_mask[quad[0]] = 1
+                occurred_entity_positive_mask[quad[2]] = 1
+                occurred_relation_positive_mask[quad[1]] = 1
+        all_known_entities[t] = occurred_entity_positive_mask.nonzero()[0]
+        all_known_relations[t] = occurred_relation_positive_mask.nonzero()[0]
     return all_known_entities, all_known_relations
-

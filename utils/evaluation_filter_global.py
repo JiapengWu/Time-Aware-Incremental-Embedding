@@ -1,7 +1,7 @@
 import torch
 from utils.utils import cuda, get_true_subject_and_object_per_graph, sort_and_rank
 import numpy as np
-# import baselines
+import pdb
 
 
 class EvaluationFilterGlobal:
@@ -41,12 +41,12 @@ class EvaluationFilterGlobal:
         ranks += 1  # change to 1-indexed
         return ranks
 
-    def mask_eval_set(self, test_triplets, test_size, global2known, mode='tail'):
-        mask = test_triplets.new_zeros(test_size, len(global2known))
+    def mask_eval_set(self, test_quadruples, test_size, global2known, mode='tail'):
+        mask = test_quadruples.new_zeros(test_size, len(global2known))
 
         # filter setting
         for i in range(test_size):
-            s, r, o, t = test_triplets[i]
+            s, r, o, t = test_quadruples[i]
             s, r, o, t = s.item(), r.item(), o.item(), t.item()
             # true subject or true object: local -> global -> known
             if mode == 'tail':
@@ -68,7 +68,6 @@ class EvaluationFilterGlobal:
         """ Perturb one element in the triplets
         """
 
-        # import pdb; pdb.set_trace()
         anchor_embedding = self.model.get_ent_embeds_train_global(
                     anchor_entities, time_tensor)
         neg_entity_embeddings = self.model.get_ent_embeds_train_global(

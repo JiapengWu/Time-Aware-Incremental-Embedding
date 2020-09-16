@@ -65,20 +65,7 @@ class TKG_Embedding_Global(TKG_Module_Global):
         torch.cuda.synchronize()
         self.batch_start_time = time.time()
 
-        relation_embedding = self.rel_embeds[quadruples[:, 1]]
-        time_tensor = quadruples[:, -1]
-
-        subject_embedding = self.get_ent_embeds_train_global(quadruples[:, 0], time_tensor)
-        object_embedding = self.get_ent_embeds_train_global(quadruples[:, 2], time_tensor)
-
-        neg_subject_embedding = self.get_ent_embeds_train_global(neg_subject_samples, time_tensor, mode='double-neg')
-        neg_object_embedding = self.get_ent_embeds_train_global(neg_object_samples, time_tensor, mode='double-neg')
-
-        loss_tail = self.train_link_prediction(subject_embedding, relation_embedding, neg_object_embedding, labels,
-                                               corrupt_tail=True)
-        loss_head = self.train_link_prediction(neg_subject_embedding, relation_embedding, object_embedding, labels,
-                                               corrupt_tail=False)
-        return loss_tail + loss_head
+        return self.learn_training_edges(quadruples, neg_subject_samples, neg_object_samples, labels)
 
     def forward(self, quadruples_dict):
         if 'train' in quadruples_dict:
@@ -86,7 +73,7 @@ class TKG_Embedding_Global(TKG_Module_Global):
             neg_object_samples, neg_subject_samples, labels = self.corrupter.negative_sampling(train_quadruples.cpu(), self.args.negative_rate)
 
         if self.sample_neg_entity and self.reservoir_sampling:
-            neg_reservoir_object_samples, neg_reservoir_subject_samples, reservoir_labels \
+            self.neg_reservoir_object_samples, self.neg_reservoir_subject_samples, self.reservoir_labels \
                 = self.corrupter.negative_sampling(quadruples_dict['reservoir'].cpu(),
                         self.args.negative_rate_reservoir, use_fixed_known_entities=False)
 
@@ -106,66 +93,69 @@ class TKG_Embedding_Global(TKG_Module_Global):
             loss += self.self_kd_factor * self.calc_self_kd_loss()
 
         if self.reservoir_sampling:
+            loss += self.calc_quad_kd_loss(quadruples_dict['reservoir'])
+        return loss
+
+    def calc_quad_kd_loss(self, reservoir_samples):
+        loss = 0
+        pos_time_tensor = reservoir_samples[:, -1]
+        cur_pos_relation_embeddings, cur_pos_subject_embeddings, cur_pos_object_embeddings = \
+            self.get_cur_embedding_positive(reservoir_samples, pos_time_tensor)
+
+        if self.sample_neg_entity:
             # pdb.set_trace()
-            reservoir_samples = quadruples_dict['reservoir']
-            # print(reservoir_samples.shape)
-            pos_time_tensor = reservoir_samples[:, -1]
-            cur_pos_relation_embeddings, cur_pos_subject_embeddings, cur_pos_object_embeddings = \
-                                        self.get_cur_embedding_positive(reservoir_samples, pos_time_tensor)
+            cur_neg_subject_embeddings = self.get_ent_embeds_train_global(
+                self.neg_reservoir_subject_samples, pos_time_tensor, mode='double-neg')
+            cur_neg_object_embeddings = self.get_ent_embeds_train_global(
+                self.neg_reservoir_object_samples, pos_time_tensor, mode='double-neg')
+
+        if self.args.KD_reservoir:
+
+            last_pos_relation_embeddings, last_pos_subject_embeddings, last_pos_object_embeddings = \
+                self.get_old_embedding_positive(reservoir_samples, pos_time_tensor)
+
+            if self.sample_positive:
+                loss += self.pos_kd(last_pos_subject_embeddings, last_pos_relation_embeddings,
+                                    last_pos_object_embeddings,
+                                    cur_pos_subject_embeddings, cur_pos_relation_embeddings,
+                                    cur_pos_object_embeddings)
 
             if self.sample_neg_entity:
-                # pdb.set_trace()
-                cur_neg_subject_embeddings = self.get_ent_embeds_train_global(
-                    neg_reservoir_subject_samples, pos_time_tensor, mode='double-neg')
-                cur_neg_object_embeddings = self.get_ent_embeds_train_global(
-                    neg_reservoir_object_samples, pos_time_tensor, mode='double-neg')
-
-            if self.args.KD_reservoir:
-
-                last_pos_relation_embeddings, last_pos_subject_embeddings, last_pos_object_embeddings = \
-                    self.get_old_embedding_positive(reservoir_samples, pos_time_tensor)
-
-                if self.sample_positive:
-                    loss += self.pos_kd(last_pos_subject_embeddings, last_pos_relation_embeddings,
+                last_neg_subject_embeddings = self.get_ent_embeds_train_global_old(self.neg_reservoir_subject_samples,
+                                                                                   pos_time_tensor,
+                                                                                   mode='double-neg')
+                last_neg_object_embeddings = self.get_ent_embeds_train_global_old(self.neg_reservoir_object_samples,
+                                                                                  pos_time_tensor,
+                                                                                  mode='double-neg')
+                loss += self.entity_kd(cur_pos_subject_embeddings, cur_pos_relation_embeddings,
+                                       cur_pos_object_embeddings,
+                                       last_pos_relation_embeddings, last_pos_subject_embeddings,
                                        last_pos_object_embeddings,
-                                       cur_pos_subject_embeddings, cur_pos_relation_embeddings,
-                                       cur_pos_object_embeddings)
+                                       cur_neg_subject_embeddings, cur_neg_object_embeddings,
+                                       last_neg_subject_embeddings, last_neg_object_embeddings)
+            if self.sample_neg_relation:
+                raise NotImplementedError
 
-                if self.sample_neg_entity:
-                    last_neg_subject_embeddings = self.get_ent_embeds_train_global_old(neg_reservoir_subject_samples,
-                                                                                       pos_time_tensor,
-                                                                                       mode='double-neg')
-                    last_neg_object_embeddings = self.get_ent_embeds_train_global_old(neg_reservoir_object_samples,
-                                                                                      pos_time_tensor,
-                                                                                      mode='double-neg')
-                    loss += self.entity_kd(cur_pos_subject_embeddings, cur_pos_relation_embeddings, cur_pos_object_embeddings,
-                                           last_pos_relation_embeddings, last_pos_subject_embeddings, last_pos_object_embeddings,
-                                           cur_neg_subject_embeddings, cur_neg_object_embeddings,
-                                           last_neg_subject_embeddings, last_neg_object_embeddings)
-                if self.sample_neg_relation:
-                    raise NotImplementedError
+        if self.args.CE_reservoir:
 
-            if self.args.CE_reservoir:
+            if self.sample_positive:
+                score = self.calc_score(cur_pos_subject_embeddings, cur_pos_relation_embeddings,
+                                        cur_pos_object_embeddings)
+                labels = torch.ones(len(reservoir_samples))
+                labels = cuda(labels, self.n_gpu) if self.use_cuda else labels
+                loss += F.binary_cross_entropy_with_logits(score, labels)
 
-                if self.sample_positive:
-                    score = self.calc_score(cur_pos_subject_embeddings, cur_pos_relation_embeddings,
-                                            cur_pos_object_embeddings)
-                    labels = torch.ones(len(reservoir_samples))
-                    labels = cuda(labels, self.n_gpu) if self.use_cuda else labels
-                    loss += F.binary_cross_entropy_with_logits(score, labels)
+            if self.sample_neg_entity:
+                loss_tail = self.train_link_prediction(cur_pos_subject_embeddings, cur_pos_relation_embeddings,
+                                                       cur_neg_object_embeddings, self.reservoir_labels,
+                                                       corrupt_tail=True)
+                loss_head = self.train_link_prediction(cur_neg_subject_embeddings, cur_pos_relation_embeddings,
+                                                       cur_pos_object_embeddings, self.reservoir_labels,
+                                                       corrupt_tail=False)
+                loss += loss_tail + loss_head
 
-                if self.sample_neg_entity:
-                    loss_tail = self.train_link_prediction(cur_pos_subject_embeddings, cur_pos_relation_embeddings,
-                                                           cur_neg_object_embeddings, reservoir_labels,
-                                                           corrupt_tail=True)
-                    loss_head = self.train_link_prediction(cur_neg_subject_embeddings, cur_pos_relation_embeddings,
-                                                           cur_pos_object_embeddings, reservoir_labels,
-                                                           corrupt_tail=False)
-                    loss += loss_tail + loss_head
-
-                if self.sample_neg_relation:
-                    raise NotImplementedError
-
+            if self.sample_neg_relation:
+                raise NotImplementedError
         return loss
 
     def calc_self_kd_loss(self):
@@ -188,27 +178,25 @@ class TKG_Embedding_Global(TKG_Module_Global):
                                                corrupt_tail=False)
         return loss_tail + loss_head
 
-    def unlearn_deleted_edges(self, deleted_triples):
-        # if type(deleted_triples) == type(None) or len(deleted_triples) == 0:
-        #     return 0
-        time_tensor = deleted_triples[:, -1]
-        subject_embeddings = self.get_ent_embeds_train_global(deleted_triples[:, 0], time_tensor)
-        object_embeddings = self.get_ent_embeds_train_global(deleted_triples[:, 2], time_tensor)
-        relation_embedding = self.rel_embeds[deleted_triples[:, 1]]
+    def unlearn_deleted_edges(self, deleted_quadruples):
+        time_tensor = deleted_quadruples[:, -1]
+        subject_embeddings = self.get_ent_embeds_train_global(deleted_quadruples[:, 0], time_tensor)
+        object_embeddings = self.get_ent_embeds_train_global(deleted_quadruples[:, 2], time_tensor)
+        relation_embedding = self.rel_embeds[deleted_quadruples[:, 1]]
         # subject_embedding, object_embedding = all_embeds_g[deleted_triples[:, 0]], all_embeds_g[deleted_triples[:, 2]]
         score = self.calc_score(subject_embeddings, relation_embedding, object_embeddings)
-        labels = torch.zeros(len(deleted_triples))
+        labels = torch.zeros(len(deleted_quadruples))
         labels = cuda(labels, self.n_gpu) if self.use_cuda else labels
         return self.args.up_weight_factor * F.binary_cross_entropy_with_logits(score, labels)
 
     def get_cur_embedding_positive(self, reservoir_samples, pos_time_tensor):
-        cur_pos_relation_embeddings = self.rel_embeds[reservoir_samples[:, 1]]
+        cur_pos_relation_embeddings = self.get_rel_embeds_train_global(reservoir_samples[:, 1], pos_time_tensor)
         cur_pos_subject_embeddings = self.get_ent_embeds_train_global(reservoir_samples[:, 0], pos_time_tensor)
         cur_pos_object_embeddings = self.get_ent_embeds_train_global(reservoir_samples[:, 2], pos_time_tensor)
         return cur_pos_relation_embeddings, cur_pos_subject_embeddings, cur_pos_object_embeddings
 
     def get_old_embedding_positive(self, reservoir_samples, pos_time_tensor):
-        last_pos_relation_embeddings = self.old_rel_embeds[reservoir_samples[:, 1]]
+        last_pos_relation_embeddings = self.get_rel_embeds_train_global_old(reservoir_samples[:, 1], pos_time_tensor)
         last_pos_subject_embeddings = self.get_ent_embeds_train_global_old(reservoir_samples[:, 0], pos_time_tensor)
         last_pos_object_embeddings = self.get_ent_embeds_train_global_old(reservoir_samples[:, 2], pos_time_tensor)
         return last_pos_relation_embeddings, last_pos_subject_embeddings, last_pos_object_embeddings
@@ -229,3 +217,9 @@ class TKG_Embedding_Global(TKG_Module_Global):
         cur_neg_obj_triple_score = self.calc_score(cur_pos_subject_embeddings, cur_pos_relation_embeddings,  cur_neg_object_embeddings, mode='tail')
         return self.loss_fn_kd(cur_neg_sub_triple_score, last_neg_sub_triple_score) \
                               + self.loss_fn_kd(cur_neg_obj_triple_score, last_neg_obj_triple_score)
+
+    def get_rel_embeds_train_global_old(self, relations, time_tensor):
+        return self.rel_embeds[relations]
+
+    def get_rel_embeds_train_global(self, relations, time_tensor):
+        return self.rel_embeds[relations]

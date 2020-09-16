@@ -1,8 +1,6 @@
-from utils.evaluation_filter import EvaluationFilter
 import torch
-from utils.utils import cuda, get_true_subject_and_object_per_graph, sort_and_rank
-import numpy as np
-import pdb
+from utils.utils import cuda, sort_and_rank
+
 
 class EvaluationRaw:
     def __init__(self, model):

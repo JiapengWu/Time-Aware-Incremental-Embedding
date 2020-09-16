@@ -31,6 +31,7 @@ class DiachronicEmbedding(TKG_Embedding_Global):
         nn.init.xavier_uniform_(self.w_temp_ent_embeds, gain=nn.init.calculate_gain('relu'))
         nn.init.xavier_uniform_(self.b_temp_ent_embeds, gain=nn.init.calculate_gain('relu'))
 
+    '''
     def get_all_embeds_Gt(self, time=None):
         if time is None: time = self.time
         static_ent_embeds = self.ent_embeds
@@ -38,7 +39,6 @@ class DiachronicEmbedding(TKG_Embedding_Global):
         return torch.cat([static_ent_embeds[:, :self.static_embed_size],
                               static_ent_embeds[:, self.static_embed_size:] * temp_ent_embeds], dim=-1)
 
-    '''
     def get_graph_ent_embeds(self, time=None):
         if time is None: time = self.time
         node_idx = self.graph_dict_train[time].ndata['id']
@@ -48,7 +48,7 @@ class DiachronicEmbedding(TKG_Embedding_Global):
                                 self.b_temp_ent_embeds[node_idx].view(-1, self.temporal_embed_size))
         return torch.cat([static_ent_embeds[:, :self.static_embed_size],
                               static_ent_embeds[:, self.static_embed_size:] * temp_ent_embeds], dim=-1)
-    '''
+    
 
     def get_all_embeds_Gt_old(self):
         static_ent_embeds = self.old_ent_embeds
@@ -56,7 +56,7 @@ class DiachronicEmbedding(TKG_Embedding_Global):
         temp_ent_embeds = torch.sin(self.time * self.old_w_temp_ent_embeds + self.old_b_temp_ent_embeds)
         return torch.cat([static_ent_embeds[:, :self.static_embed_size],
                               static_ent_embeds[:, self.static_embed_size:] * temp_ent_embeds], dim=-1)
-
+    '''
     def precompute_entity_time_embed(self):
         time_tensor = torch.tensor(list(range(self.args.end_time_step))).unsqueeze(0).unsqueeze(2)
         if self.use_cuda:
@@ -83,6 +83,7 @@ class DiachronicEmbedding(TKG_Embedding_Global):
             return torch.cat([static_ent_embeds[:, :, :self.static_embed_size],
                               static_ent_embeds[:, :, self.static_embed_size:] * temp_ent_embeds], dim=-1)
 
+
     def get_ent_embeds_train_global_old(self, entities, time_tensor, mode='pos'):
         static_ent_embeds = self.old_ent_embeds[entities]
         if mode == 'pos':
@@ -93,7 +94,6 @@ class DiachronicEmbedding(TKG_Embedding_Global):
             temp_ent_embeds = torch.sin(time_tensor.unsqueeze(-1).unsqueeze(-1) * self.old_w_temp_ent_embeds[entities] + self.old_b_temp_ent_embeds[entities])
             return torch.cat([static_ent_embeds[:, :, :self.static_embed_size],
                               static_ent_embeds[:, :, self.static_embed_size:] * temp_ent_embeds], dim=-1)
-
 
     def calc_self_kd_loss(self):
         first_loss = super().calc_self_kd_loss()

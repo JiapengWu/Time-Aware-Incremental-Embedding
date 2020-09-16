@@ -8,6 +8,7 @@ from utils.dataset import BaseModelDataset, TrainDataset, ValDataset, DataLoader
 from utils.CorruptTriplesGlobal import CorruptTriplesGlobal
 import torch.nn.functional as F
 from utils.evaluation_filter_global import EvaluationFilterGlobal
+from utils.evaluation_filter_global_atise import EvaluationFilterGlobalAtiSE
 from utils.metrics_collection import metric_collection, counter_gauge
 import torch.nn as nn
 from utils.utils import get_add_del_graph_global, get_metrics, collect_one_hot_neighbors_global, \
@@ -20,6 +21,7 @@ import time
 import math
 from utils.reservoir_sampler import time_window_random_historical_sampling
 import pdb
+import baselines
 
 
 class TKG_Module_Global(LightningModule):
@@ -42,7 +44,7 @@ class TKG_Module_Global(LightningModule):
             self.init_metrics_collection()
 
         self.corrupter = CorruptTriplesGlobal(self)
-        self.evaluater = EvaluationFilterGlobal(self)
+        self.evaluater = EvaluationFilterGlobal(self) if not isinstance(self, baselines.ATiSE.ATiSE) else EvaluationFilterGlobalAtiSE(self)
         self.addition = args.addition
         self.deletion = args.deletion
         self.sample_positive = self.args.sample_positive
@@ -230,7 +232,6 @@ class TKG_Module_Global(LightningModule):
                and not self.deletion and not self.reservoir_sampling
 
     def _dataloader(self, dataset, batch_size, should_shuffle):
-
         return DataLoader(
             dataset=dataset,
             batch_size=batch_size,
@@ -325,17 +326,10 @@ class TKG_Module_Global(LightningModule):
         else:
             return self._dataloader_val(time2triples_test)
 
-    def train_link_prediction(self, subject_embedding, relation_embedding, object_embedding, labels, corrupt_tail=True, loss='CE'):
+    def train_link_prediction(self, subject_embedding, relation_embedding, object_embedding, labels, corrupt_tail=True):
         # neg samples are in global idx
         score = self.calc_score(subject_embedding, relation_embedding, object_embedding, mode='tail' if corrupt_tail else 'head')
-        if loss == 'CE':
-            return F.cross_entropy(score, labels.long())
-        elif loss == 'margin':
-            pos_score = score[:, 0].unsqueeze(-1).repeat(1, self.negative_rate)
-            neg_score = score[:, 1:]
-            return torch.sum(- F.logsigmoid(1 - pos_score) - F.logsigmoid(neg_score - 1))
-        else:
-            raise NotImplementedError
+        return F.cross_entropy(score, labels.long())
 
     def link_classification_loss(self, ent_embed, rel_embeds, triplets, labels):
         # triplets is a list of extrapolation samples (positive and negative)
@@ -352,4 +346,5 @@ class TKG_Module_Global(LightningModule):
 
     def get_known_entities_relation_per_time_step(self):
         self.all_known_entities, self.all_known_relations = \
-            get_known_entities_relations_per_time_step_global(self.time2quads_train, self.time2quads_val, self.time2quads_test)
+            get_known_entities_relations_per_time_step_global(self.time2quads_train,
+                            self.time2quads_val, self.time2quads_test, self.num_ents, self.num_rels)

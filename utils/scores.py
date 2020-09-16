@@ -61,14 +61,25 @@ def transE(head, relation, tail, mode='single'):
     return score
 
 
-def ATiSE_score(head, relation, tail, mode='single'):
-
+def ATiSE_score(head_mean, head_cov, tail_mean, tail_cov, rel_mean, rel_cov, mode='single'):
+    # # Calculate KL(r, e)
     if mode == 'tail':
-        e_prob = head.unsqueeze(1) - tail
-        r_prob = relation.unsqueeze(1).repeat(1,e_prob.shape[1],1)
+        error_mean =  head_mean.unsqueeze(1) - tail_mean
+        error_cov = head_cov.unsqueeze(1) + tail_cov
+        rel_mean = rel_mean.unsqueeze(1)
+        rel_cov = rel_cov.unsqueeze(1)
     elif mode == 'head':
-        e_prob = head + tail.unsqueeze(1)
-        r_prob = relation.unsqueeze(1).repeat(1,e_prob.shape[1],1)
+        error_mean =  head_mean - tail_mean.unsqueeze(1)
+        error_cov = head_cov + tail_cov.unsqueeze(1)
+        rel_mean = rel_mean.unsqueeze(1)
+        rel_cov = rel_cov.unsqueeze(1)
     else:
-        e_prob = head - tail
-    return torch.sum(F.kl_div(e_prob, r_prob, reduction='none'), dim=2)
+        error_mean =  head_mean - tail_mean
+        error_cov = head_cov + tail_cov
+    
+    lossp1 = torch.sum(error_cov/rel_cov, dim=-1)
+    lossp2 = torch.sum((error_mean - rel_mean) ** 2 / rel_cov, dim=-1)
+    lossp3 = - torch.sum(torch.log(error_cov), dim=-1) + torch.sum(torch.log(rel_cov), dim=-1)
+    KLre = - (lossp1 + lossp2 + lossp3 - 128) / 2
+ 
+    return KLre

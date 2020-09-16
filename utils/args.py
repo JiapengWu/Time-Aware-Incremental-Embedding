@@ -104,4 +104,6 @@ def process_args():
         print(args.base_model_path)
     if args.cold_start:
         args.load_base_model = False
+    if args.module == 'atise':
+        args.score_function = 'atise'
     return args
