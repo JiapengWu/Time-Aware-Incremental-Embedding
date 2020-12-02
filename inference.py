@@ -9,7 +9,7 @@ import glob
 import json
 import pickle
 import os.path
-from utils.utils import get_metrics, get_add_del_graph
+from utils.util_functions import get_metrics, get_add_del_graph
 
 
 def get_predictions(quadruples, ranks):

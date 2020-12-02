@@ -3,16 +3,17 @@ from utils.dataset import *
 from utils.args import process_args
 from baselines.Static import Static
 from baselines.DiachronicEmbedding import DiachronicEmbedding
-from baselines.ATiSE import ATiSE
+from baselines.Hyte import Hyte
 import time
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping
-from utils.utils import MyTestTubeLogger, get_known_entities_per_time_step, get_known_relations_per_time_step
+from utils.util_functions import MyTestTubeLogger
 import json
 from pytorch_lightning.callbacks import ModelCheckpoint
 import torch
 import sys
 import glob
+import pdb
 
 if __name__ == '__main__':
     args = process_args()
@@ -32,7 +33,8 @@ if __name__ == '__main__':
     args.n_gpu = 0 if args.cpu else args.n_gpu
     if use_cuda:
         torch.cuda.set_device(args.n_gpu[0])
-    name = "{}-{}-{}-patience-{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1],
+
+    name = "{}-{}-{}-patience-{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1],
                                                              args.score_function, args.patience,
                                         "-addition" if args.addition else "",
                                         "-deletion" if args.deletion else "",
@@ -56,6 +58,8 @@ if __name__ == '__main__':
                                         "-sample-neg-relation" if args.sample_neg_relation else "",
                                         "-sample-neg-entity" if args.sample_neg_entity else "",
                                         "-neg-rate-reservoir-{}".format(args.negative_rate_reservoir) if args.sample_neg_entity else "",
+                                        "-frequency-sampling" if args.frequency_sampling else "",
+                                        "-inverse-frequency-sampling" if args.inverse_frequency_sampling else "",
                                     )
     # TODO: adjust the naming function
 
@@ -63,11 +67,15 @@ if __name__ == '__main__':
     log_file_out = "logs/log-{}-{}".format(name, version)
     log_file_err = "errs/log-{}-{}".format(name, version)
 
+    myhost = os.uname()[1]
+    experiment_path = '.'
+
     if not args.debug:
         sys.stdout = open(log_file_out, 'w')
         sys.stderr = open(log_file_err, 'w')
+
     tt_logger = MyTestTubeLogger(
-        save_dir="/media/data/jiapeng-yishi/experiments",
+        save_dir=os.path.join(experiment_path, "experiments"),
         name=name,
         debug=False,
         version=version,
@@ -84,7 +92,7 @@ if __name__ == '__main__':
     module = {
               "Static": Static,
               "DE": DiachronicEmbedding,
-              "ATiSE": ATiSE,
+              "hyte": Hyte
               }[args.module]
 
     print("\'{}\',".format(args.base_path))
@@ -94,7 +102,7 @@ if __name__ == '__main__':
     tt_logger.save()
 
     args.end_time_step = min(len(total_time), args.end_time_step + 1)
-    args.train_base_model = args.end_time_step < len(total_time)
+    args.train_base_model = args.train_base_model or args.end_time_step < len(total_time)
     # import pdb; pdb.set_trace()
     # print(len(total_time))
     # print(end_time_step)
@@ -105,7 +113,6 @@ if __name__ == '__main__':
         base_model_path = glob.glob(os.path.join(args.base_model_path, "*.ckpt"))[0]
         base_model_checkpoint = torch.load(base_model_path, map_location=lambda storage, loc: storage)
         model.load_state_dict(base_model_checkpoint['state_dict'], strict=False)
-
 
     for time in range(args.start_time_step, args.end_time_step):
         early_stop_callback = EarlyStopping(
@@ -136,12 +143,18 @@ if __name__ == '__main__':
                           overfit_batches=1 if args.overfit else 0,
                           show_progress_bar=True,
                           # print_nan_grads=True,
+                          terminate_on_nan=True,
                           checkpoint_callback=checkpoint_callback
                           )
 
         if args.train_base_model:
             model.on_time_step_start(time)
-            trainer.fit(model)
+            try:
+                trainer.fit(model)
+            except ValueError:
+                pass
+
+            model.load_best_checkpoint()
             test_res = trainer.test(model=model)
             model.on_time_step_end()
             break

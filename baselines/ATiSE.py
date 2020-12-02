@@ -1,11 +1,12 @@
 from torch import nn
 from utils.scores import *
-from utils.utils import cuda
+from utils.util_functions import cuda
 from models.TKG_Embedding_Global import TKG_Embedding_Global
 import math
 import numpy as np
 import torch.nn.functional as F
 import pdb
+
 
 class ATiSE(TKG_Embedding_Global):
     def __init__(self, args, num_ents, num_rels):
@@ -24,7 +25,6 @@ class ATiSE(TKG_Embedding_Global):
             self.old_sigma_ent = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size), requires_grad=False)
             self.old_sigma_rel = nn.Parameter(torch.Tensor(self.num_rels * 2, self.embed_size), requires_grad=False)
 
-
     def load_old_parameters(self):
         super(ATiSE, self).load_old_parameters()
         self.old_alpha_ent.data = self.alpha_ent.data.clone()
@@ -39,7 +39,7 @@ class ATiSE(TKG_Embedding_Global):
         self.old_sigma_rel.data = self.sigma_rel.data.clone()
 
     def build_model(self):
-        beta_size = 1 if False else self.embed_size
+        beta_size = 1 if True else self.embed_size
         self.w_ent = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size))
         self.w_rel = nn.Parameter(torch.Tensor(self.num_rels*2, self.embed_size))
         nn.init.xavier_uniform_(self.w_ent, gain=nn.init.calculate_gain('relu'))
@@ -77,36 +77,6 @@ class ATiSE(TKG_Embedding_Global):
         nn.init.xavier_uniform_(self.omega_rel, gain=nn.init.calculate_gain('relu'))
         nn.init.xavier_uniform_(self.sigma_ent, gain=nn.init.calculate_gain('relu'))
         nn.init.xavier_uniform_(self.sigma_rel, gain=nn.init.calculate_gain('relu'))
-
-    '''
-    def get_all_embeds_Gt(self, time=None):
-        if time is None: time = self.time
-        static_ent_embeds = self.ent_embeds
-        trend = self.alpha_ent * self.w_ent * time
-        seasonality = self.beta_ent * torch.sin(2 * np.pi * self.w_ent * time)
-        return static_ent_embeds + trend + seasonality 
-
-    def get_graph_ent_embeds(self, time=None):
-        if time is None: time = self.time
-        node_idx = self.graph_dict_train[time].ndata['id']
-        static_ent_embeds = self.ent_embeds[node_idx].view(-1, self.embed_size)
-        trend = self.alpha_ent[node_idx].view(-1,1) * self.w_ent[node_idx].view(-1, self.embed_size) * time
-        seasonality = self.beta_ent[node_idx].view(-1,1) * torch.sin(2 * np.pi * self.w_ent[node_idx].view(-1, self.embed_size) * time)
-        return static_ent_embeds + trend + seasonality 
-
-    def get_graph_ent_covs(self, time=None):
-        if time is None: time = self.time
-        node_idx = self.graph_dict_train[time].ndata['id']
-        static_ent_covs = self.sigma_ent[node_idx].view(-1, self.embed_size)
-        return static_ent_covs
-
-    def get_all_rel_embeds_Gt(self, time=None):
-        if time is None: time = self.time
-        static_rel_embeds = self.rel_embeds
-        trend = self.alpha_rel * self.w_rel * time
-        seasonality = self.beta_rel * torch.sin(2 * np.pi * self.w_rel * time)
-        return static_rel_embeds + trend + seasonality 
-    '''
 
     def weight_normalization(self):
         self.ent_embeds.data.copy_(self.ent_embeds / torch.norm(self.ent_embeds, dim=1).unsqueeze(1))
@@ -240,9 +210,9 @@ class ATiSE(TKG_Embedding_Global):
 
     def calc_quad_kd_loss(self, reservoir_samples):
 
+        loss = 0
         subjects, relations, objects, pos_time_tensor = reservoir_samples[:, 0], \
                         reservoir_samples[:, 1], reservoir_samples[:, 2], reservoir_samples[:, 3]
-        loss = 0
         cur_pos_relation_mean, cur_pos_subject_mean, cur_pos_object_mean = \
             self.get_cur_embedding_positive(reservoir_samples, pos_time_tensor)
 

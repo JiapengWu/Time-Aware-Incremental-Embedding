@@ -1,5 +1,5 @@
 import torch
-from utils.utils import cuda, sort_and_rank
+from utils.util_functions import cuda, sort_and_rank
 
 
 class EvaluationRaw:

@@ -16,12 +16,11 @@ def get_args():
     parser.add_argument("--max-nb-epochs", type=int, default=100)
     parser.add_argument("--num-processes", type=int, default=1)
     parser.add_argument("--dropout", type=float, default=0.1)
-
     parser.add_argument("--num-layers", type=int, default=1)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--gradient-clip-val", type=float, default=1.0)
     parser.add_argument("--patience", type=int, default=20)
-    parser.add_argument("--n-bases", type=int, default=128, help="number of weight blocks for each relation")
+    # parser.add_argument("--n-bases", type=int, default=128, help="number of weight blocks for each relation")
 
     parser.add_argument("--train-batch-size", type=int, default=2048)
     parser.add_argument("--test-batch-size", type=int, default=100)
@@ -29,7 +28,7 @@ def get_args():
     parser.add_argument("--negative-rate", type=int, default=500)
     parser.add_argument('--log-gpu-memory', action='store_true')
     parser.add_argument('--debug', action='store_true')
-    parser.add_argument('--eval-on-test-set', action='store_true')
+    parser.add_argument('--test-set', action='store_true')
     parser.add_argument("--cold-start", action='store_true', help='Not loading models from the last time step')
 
     parser.add_argument('--inference', action='store_true')
@@ -46,8 +45,15 @@ def get_args():
     parser.add_argument("--deletion", action='store_true')
 
     # reservoir sampling parameters
-
     parser.add_argument("--all-prev-time-steps", action='store_true')
+    parser.add_argument("--frequency-sampling", action='store_true')
+    parser.add_argument("--inverse-frequency-sampling", action='store_true')
+    parser.add_argument("--lambda-triple", type=int, default=2)
+    parser.add_argument("--lambda-ent-pair", type=int, default=1.5)
+    parser.add_argument("--lambda-ent-rel", type=int, default=1.3)
+    parser.add_argument("--lambda-ent", type=int, default=1)
+    parser.add_argument("--sigma", type=float, default=10)
+    parser.add_argument("--cur-frequency-discount-factor", type=float, default=0.5)
 
     # positive vs negative entities vs negative relations
     parser.add_argument("--sample-positive", action='store_true')
@@ -58,10 +64,12 @@ def get_args():
     # history versus present
     parser.add_argument("--historical-sampling", action='store_true')
     parser.add_argument("--train-seq-len", type=int, default=10)
+    parser.add_argument("--eval-seq-len", type=int, default=10)
     parser.add_argument("--num-samples-each-time-step", type=int, default=1000)
+    parser.add_argument("--deleted-edge-sample-size", type=int, default=10000)
     parser.add_argument("--present-sampling", action='store_true')
     parser.add_argument("--one-hop-positive-sampling", action='store_true')
-    parser.add_argument("--max-num-pos-samples", type=float, default=2048)
+    # parser.add_argument("--max-num-pos-samples", type=float, default=2048)
 
     # after reservoir sampling, decide whether to use KD loss, CE loss or both
     parser.add_argument("--KD-reservoir", action='store_true')
@@ -80,6 +88,7 @@ def get_args():
     parser.add_argument("--fast", action='store_true')
     parser.add_argument('--config', '-c', type=str, default=None, help='JSON file with argument for the run.')
     parser.add_argument("--checkpoint-path", type=str, default=None)
+    parser.add_argument("--base-model", action='store_true')
 
     parser.add_argument("--cpu", action='store_true')
     return parser.parse_args()
@@ -99,8 +108,11 @@ def process_args():
         assert args.sample_positive or args.sample_neg_entity or args.sample_neg_relation
 
     if args.load_base_model:
-        args.base_model_path = "/media/data/jiapeng-yishi/experiments/base-model/{}-{}".format(args.module, dataset)
-        args.start_time_step = 68 if dataset == 'wiki' else 50
+        start_time_step_dict = {'wiki': 54, "yago": 42, "icews14": 292, 'gdelt': 292}
+        myhost = os.uname()[1]
+        experiment_path = '..'
+        args.base_model_path = "{}/experiments/base-model/{}-{}".format(experiment_path, args.module, dataset)
+        args.start_time_step = start_time_step_dict[dataset]
         print(args.base_model_path)
     if args.cold_start:
         args.load_base_model = False

@@ -1,6 +1,6 @@
+dgl-cu101==0.4.3.post2
+matplotlib
 test-tube==0.7.5
 pytorch-lightning==0.8.1
 pytorch==1.5.1
-dgl-cu101==0.4.3.post2
 cudatoolkit==10.1.243
-matplotlib

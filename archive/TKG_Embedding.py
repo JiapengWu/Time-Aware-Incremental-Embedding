@@ -1,6 +1,6 @@
 from archive.TKG_Module import TKG_Module
 import torch
-from utils.utils import cuda, mse_loss, collect_one_hot_neighbors
+from utils.util_functions import cuda, mse_loss, collect_one_hot_neighbors
 import torch.nn.functional as F
 import time
 

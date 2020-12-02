@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from utils.utils import cuda, get_true_subject_and_object_per_graph
+from utils.util_functions import cuda, get_true_subject_and_object_per_graph
 
 
 class CorruptTriples:

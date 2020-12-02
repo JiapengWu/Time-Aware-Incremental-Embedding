@@ -13,7 +13,7 @@ from archive.evaluation_filter import EvaluationFilter
 from utils.evaluation_filter_global import EvaluationFilterGlobal
 from utils.metrics_collection import metric_collection, counter_gauge
 import torch.nn as nn
-from utils.utils import get_add_del_graph, get_metrics, get_known_entities_per_time_step, get_known_relations_per_time_step, get_common_triples_adjacent_time
+from utils.util_functions import get_add_del_graph, get_metrics, get_known_entities_per_time_step, get_known_relations_per_time_step, get_common_triples_adjacent_time
 from utils.dataset import load_quadruples_tensor
 import os
 import glob

@@ -1,9 +1,9 @@
-from models.RGCN import RGCN
+from archive.RGCN import RGCN
 import numpy as np
-from utils.utils import move_dgl_to_cuda
+from utils.util_functions import move_dgl_to_cuda
 from utils.scores import *
 from archive.TKG_Module import TKG_Module
-from utils.utils import build_sampled_graph_from_triples
+from utils.util_functions import build_sampled_graph_from_triples
 
 
 class StaticRGCN(TKG_Module):

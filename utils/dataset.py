@@ -5,10 +5,12 @@ import dgl
 from torch.utils.data import Dataset, ConcatDataset
 import torch
 from utils.args import process_args
-from utils.utils import node_norm_to_edge_norm, comp_deg_norm, sort_dict, get_true_subject_and_object_per_graph, cuda
+from utils.util_functions import node_norm_to_edge_norm, comp_deg_norm, sort_dict, get_true_subject_and_object_per_graph, cuda
 from collections import defaultdict
 from functools import reduce
 import pdb
+from torch.utils.data import DataLoader
+import math
 
 
 def load_quadruples(dataset_path, fileName, fileName2=None, fileName3=None):
@@ -21,7 +23,7 @@ def load_quadruples(dataset_path, fileName, fileName2=None, fileName3=None):
             tail = int(line_split[2])
             rel = int(line_split[1])
             time = int(line_split[3])
-            quadrupleList.append([head, rel, tail, time])
+            quadrupleList.append((head, rel, tail, time))
             times.add(time)
 
     if fileName2 is not None:
@@ -32,7 +34,7 @@ def load_quadruples(dataset_path, fileName, fileName2=None, fileName3=None):
                 tail = int(line_split[2])
                 rel = int(line_split[1])
                 time = int(line_split[3])
-                quadrupleList.append([head, rel, tail, time])
+                quadrupleList.append((head, rel, tail, time))
                 times.add(time)
 
     if fileName3 is not None:
@@ -43,11 +45,11 @@ def load_quadruples(dataset_path, fileName, fileName2=None, fileName3=None):
                 tail = int(line_split[2])
                 rel = int(line_split[1])
                 time = int(line_split[3])
-                quadrupleList.append([head, rel, tail, time])
+                quadrupleList.append((head, rel, tail, time))
                 times.add(time)
     times = list(times)
     times.sort()
-    return np.asarray(quadrupleList), np.asarray(times)
+    return list(set(quadrupleList)), np.asarray(times)
 
 
 def get_data_with_t(data, tim):
@@ -221,11 +223,11 @@ def load_quadruples_tensor(dataset_path, train_fname, valid_fname, test_fname):
                 rel = int(line_split[1])
                 tail = int(line_split[2])
                 time = int(line_split[3])
-                time2quads[time].append([head, rel, tail, time])
+                time2quads[time].append((head, rel, tail, time))
     # pdb.set_trace()
     for time2quads in time2quads_train, time2quads_val, time2quads_test:
         for t in time2quads.keys():
-            time2quads[t] = torch.tensor(time2quads[t])
+            time2quads[t] = torch.tensor(list(set(time2quads[t])))
     return sort_dict(time2quads_train), sort_dict(time2quads_val), sort_dict(time2quads_test)
 
 
@@ -308,9 +310,54 @@ def id2entrel(dataset_path, num_rels):
 flatten = lambda l: [item for sublist in l for item in sublist]
 
 
+def fill_latest_currence_time_step(time2quads, reservoir, t):
+    quads = time2quads[t]
+    for quad in quads:
+        s, r, o, _ = quad
+        s, r, o = s.item(), r.item(), o.item()
+        reservoir[(s, r, o)] = t
+
+
+def get_prev_triples(reservoir, t, train_seq_len, train=True):
+    train_reservoir_quads = []
+    for (s, r, o), t_prev in reservoir.items():
+        if t - t_prev <= train_seq_len and t != t_prev:
+            # cur_lst = [s, r, o, t, t_prev]
+            cur_lst = [s, r, o, t]
+            train_reservoir_quads.append(cur_lst)
+    return np.array(train_reservoir_quads)
+
+
+def init_data_loader(dataset, batch_size, should_shuffle):
+    return DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        shuffle=should_shuffle,
+    )
+
+
+def base_model_data_loader(time2quads, batch_size, end_time_step, train=False):
+    dataset = BaseModelDataset(time2quads, end_time_step)
+    return init_data_loader(dataset, batch_size, train)
+
+
+def dataloader_wrapper(dataset_dict, original_batch_size, shuffle=True):
+    dataloader_dict = {}
+    quadruple_size_sum = np.sum([len(dataset) for dataset in dataset_dict.values()])
+    num_batch = math.ceil(quadruple_size_sum / original_batch_size)
+    for key, dataset in dataset_dict.items():
+        batch_size = math.ceil(len(dataset) / num_batch)
+        # print(len(dataset), batch_size, math.ceil(len(dataset) / batch_size))
+        dataloader_dict[key] = DataLoader(
+            dataset=dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+        )
+    return DataLoaderWrapper(dataloader_dict)
+
+
 class FullBatchDataset(Dataset):
     def __init__(self, graph_dict, time):
-
         graph = graph_dict[time]
         self.quadruples = self.get_quadruples(graph, time)
 
@@ -327,8 +374,8 @@ class FullBatchDataset(Dataset):
 
 class BaseModelDataset(Dataset):
     def __init__(self, time2triples, end_time_step):
-        # import pdb; pdb.set_trace()
         self.quadruples = torch.cat([triples for time, triples in time2triples.items() if time < end_time_step])
+
     def __getitem__(self, index):
         return self.quadruples[index]
 
@@ -341,7 +388,6 @@ class ValDataset(Dataset):
         self.quadruples = torch.tensor(time2triples[time])
 
     def __getitem__(self, index):
-        # pdb.set_trace()
         return self.quadruples[index]
 
     def __len__(self):
@@ -359,8 +405,14 @@ class DataLoaderIterWrapper:
 
     def __next__(self):
         next_data = {}
+        all_stopped = 0
         for key, data_loader_iters in self.data_loader_iters_dict.items():
-            next_data[key] = next(data_loader_iters)
+            try:
+                next_data[key] = next(data_loader_iters)
+            except StopIteration as e:
+                all_stopped += 1
+        if all_stopped == len(self.data_loader_iters_dict):
+            raise StopIteration
         return next_data
 
     def __iter__(self):
@@ -374,6 +426,29 @@ class DataLoaderWrapper:
     def __iter__(self):
         return DataLoaderIterWrapper({key: dataloader.__iter__() for key, dataloader in self.dataloader_dict.items()})
 
+
+'''
+class DiffTimeDatasetIterWrapper:
+    def __init__(self, data_loader_iters_dict):
+        self.data_loader_iters_dict = data_loader_iters_dict
+
+    def __next__(self):
+        next_data = {}
+        for key, data_loader_iters in self.data_loader_iters_dict.items():
+            next_data[key] = next(data_loader_iters)
+        return next_data
+
+    def __iter__(self):
+        return self
+
+
+class DiffTimeDatasetWrapper():
+    def __init__(self, dataloader_dict):
+        super(DiffTimeDatasetWrapper, self).__init__(dataloader_dict)
+
+    def __iter__(self):
+        return DataLoaderIterWrapper({key: dataloader.__iter__() for key, dataloader in self.dataloader_dict.items()})
+'''
 
 if __name__ == '__main__':
     args = process_args()

@@ -1,9 +1,10 @@
 logs
-experiments
+!experiments
+experiments/*
+!experiments/base-model
 **/*.pyc
 **/__pycache__/
 *_graphs.txt
 .idea/
 analysis/
-baselines/Hyte.py
 baselines/Simple.py

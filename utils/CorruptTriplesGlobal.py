@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from utils.utils import cuda, get_true_subject_and_object_per_graph
+from utils.util_functions import cuda, get_true_subject_and_object_per_graph
 np.random.seed(0)
 
 
@@ -14,7 +14,7 @@ class CorruptTriplesGlobal:
 
     def set_known_entities(self):
         self.all_known_entities = self.model.all_known_entities
-        self.known_entities = self.model.all_known_entities[self.args.end_time_step]\
+        self.known_entities = self.model.all_known_entities[self.args.end_time_step - 1]\
             if self.args.train_base_model else self.model.known_entities
 
     def get_true_subject_object_global(self):
@@ -37,12 +37,9 @@ class CorruptTriplesGlobal:
         neg_subject_samples[:, 0] = quadruples[:, 0]
         labels = torch.zeros(size_of_batch)
         for i in range(size_of_batch):
-            # import pdb; pdb.set_trace()
             s, r, o, t = quadruples[i]
             s, r, o, t = s.item(), r.item(), o.item(), t.item()
-
             known_entities = self.known_entities if use_fixed_known_entities else self.all_known_entities[t]
-
             tail_samples = self.corrupt_triple(s, r, o, negative_rate, self.true_objects_train_global_dict[t], known_entities, corrupt_object=True)
             head_samples = self.corrupt_triple(s, r, o, negative_rate, self.true_subjects_train_global_dict[t], known_entities, corrupt_object=False)
             neg_object_samples[i][0] = o
