@@ -11,7 +11,6 @@ from utils.metrics_collection import eval_metric_collection
 from baselines.Hyte import Hyte
 
 
-
 def inference_func(model, metrics_collector, cur_time, start_time_step, end_time_step):
     model.time = cur_time
     model.eval_subject_relation_dict = defaultdict(int)
@@ -53,6 +52,19 @@ def inference_single_model():
     metrics_collector.save()
 
 
+def inference_multi_model():
+    time2checkpoint = load_multiple_models()
+    for cur_time in range(start_time_step, end_time_step):
+        print("Inference at time step {}".format(cur_time))
+        checkpoint = torch.load(time2checkpoint[cur_time], map_location=lambda storage, loc: storage)
+        model.load_state_dict(checkpoint['state_dict'], strict=False)
+        model.on_load_checkpoint(checkpoint)
+        inference_func(model, metrics_collector, cur_time, start_time_step, end_time_step)
+
+    metrics_collector.copy()
+    metrics_collector.save()
+
+
 def load_multiple_models():
     snapshot_paths = glob.glob(os.path.join(experiment_path, "snapshot-*"))
 
@@ -68,22 +80,9 @@ def load_multiple_models():
 
     for t, checkpoint in time2checkpoint.items():
         if type(checkpoint) == type(None):
-            print("Missing checkpoint for time step {}, using the checkpoint of time step ".format(t, t - 1))
+            print("Missing checkpoint for time step {}, using the checkpoint of time step {}".format(t, t - 1))
             time2checkpoint[t] = time2checkpoint[t - 1]
     return time2checkpoint
-
-
-def inference_multi_model():
-    time2checkpoint = load_multiple_models()
-    for cur_time in range(start_time_step, end_time_step):
-        print("Inference at time step {}".format(cur_time))
-        checkpoint = torch.load(time2checkpoint[cur_time], map_location=lambda storage, loc: storage)
-        model.load_state_dict(checkpoint['state_dict'], strict=False)
-        model.on_load_checkpoint(checkpoint)
-        inference_func(model, metrics_collector, cur_time, start_time_step, end_time_step)
-
-    metrics_collector.copy()
-    metrics_collector.save()
 
 
 def predict_multi_model():
@@ -96,13 +95,13 @@ def predict_multi_model():
         model.load_state_dict(checkpoint['state_dict'], strict=False)
         model.on_load_checkpoint(checkpoint)
         predictions = model.single_step_inference(cur_time, test_set=test_set)
-
         all_time_predictions.extend(predictions)
 
     with open(prediction_file, 'wb') as filehandle:
         pickle.dump(all_time_predictions, filehandle)
 
     return all_time_predictions
+
 
 if __name__ == '__main__':
     args = process_args()
@@ -137,7 +136,7 @@ if __name__ == '__main__':
     if args.base_model:
         inference_single_model()
     else:
-        if True:
+        if False:
             predict_multi_model()
         else:
             inference_multi_model()

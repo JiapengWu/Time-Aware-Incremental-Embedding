@@ -2,6 +2,11 @@ import torch
 from utils.util_functions import cuda, get_true_subject_and_object_per_graph, sort_and_rank
 import numpy as np
 import pdb
+import os
+import pickle
+import shelve
+from utils.util_functions import write_to_shelve, write_to_default_dict
+from collections import defaultdict
 
 
 class EvaluationFilterGlobal:
@@ -9,38 +14,122 @@ class EvaluationFilterGlobal:
         self.model = model
         self.args = model.args
         self.calc_score = model.calc_score
+        # print("Constructing eval filter")
         self.get_true_subject_and_object_global()
-        self.get_true_subject_and_object_val()
 
+    '''
     def get_true_subject_and_object_global(self):
-        self.true_subject_global_dict = dict()
-        self.true_object_global_dict = dict()
+        if os.path.exists(true_subject_path) and os.path.exists(true_object_path):
+            with open(true_subject_path, "rb") as f:
+                self.true_subject_global_dict = pickle.load(f)
+            with open(true_object_path, "rb") as f:
+                self.true_object_global_dict = pickle.load(f)
+        else:
+            self.true_subject_global_dict = dict()
+            self.true_object_global_dict = dict()
 
-        for t in self.model.total_time:
-            quads = torch.cat([self.model.time2quads_train[t],
-                                 self.model.time2quads_val[t],
-                                 self.model.time2quads_test[t]])
-            true_head_dict, true_tail_dict = get_true_subject_and_object_per_graph(quads[:, :3])
-            self.true_subject_global_dict[t] = true_head_dict
-            self.true_object_global_dict[t] = true_tail_dict
+            for t in self.model.total_time:
+                quads = torch.cat([self.model.time2quads_train[t],
+                                     self.model.time2quads_val[t],
+                                     self.model.time2quads_test[t]])
+                # print(t,len(quads))
+                true_head_dict, true_tail_dict = get_true_subject_and_object_per_graph(quads[:, :3])
+                self.true_subject_global_dict[t] = true_head_dict
+                self.true_object_global_dict[t] = true_tail_dict
+
+            with open(true_subject_path, 'wb') as fp:
+                pickle.dump(self.true_subject_global_dict, fp)
+            with open(true_object_path, 'wb') as fp:
+                pickle.dump(self.true_object_global_dict, fp)
 
     def get_true_subject_and_object_val(self):
-        self.true_subject_val_dict = dict()
-        self.true_object_val_dict = dict()
-        self.true_subject_test_dict = dict()
-        self.true_object_test_dict = dict()
+        true_subject_val_path = os.path.join(self.args.dataset, "true_subjects_val.pt")
+        true_object_val_path = os.path.join(self.args.dataset, "true_objects_val.pt")
+        true_subject_test_path = os.path.join(self.args.dataset, "true_subjects_test.pt")
+        true_object_test_path = os.path.join(self.args.dataset, "true_objects_test.pt")
 
-        for t in self.model.total_time:
-            val_quads = self.model.time2quads_val[t]
-            test_quads = self.model.time2quads_test[t]
-            true_subject_dict_val, true_object_dict_val = get_true_subject_and_object_per_graph(val_quads[:, :3])
-            true_subject_dict_test, true_object_dict_test = get_true_subject_and_object_per_graph(test_quads[:, :3])
+        if os.path.exists(true_subject_val_path) and os.path.exists(true_object_val_path)\
+                and os.path.exists(true_subject_test_path) and os.path.exists(true_object_test_path):
+            with open(true_subject_val_path, "rb") as f:
+                self.true_subject_val_dict = pickle.load(f)
+            with open(true_object_val_path, "rb") as f:
+                self.true_object_val_dict = pickle.load(f)
+            with open(true_subject_test_path, "rb") as f:
+                self.true_subject_test_dict = pickle.load(f)
+            with open(true_object_test_path, "rb") as f:
+                self.true_object_test_dict = pickle.load(f)
+        else:
+            self.true_subject_val_dict = dict()
+            self.true_object_val_dict = dict()
+            self.true_subject_test_dict = dict()
+            self.true_object_test_dict = dict()
 
-            self.true_subject_val_dict[t] = true_subject_dict_val
-            self.true_object_val_dict[t] = true_object_dict_val
+            for t in self.model.total_time:
+                val_quads = self.model.time2quads_val[t]
+                test_quads = self.model.time2quads_test[t]
+                true_subject_dict_val, true_object_dict_val = get_true_subject_and_object_per_graph(val_quads[:, :3])
+                true_subject_dict_test, true_object_dict_test = get_true_subject_and_object_per_graph(test_quads[:, :3])
 
-            self.true_subject_test_dict[t] = true_subject_dict_test
-            self.true_object_test_dict[t] = true_object_dict_test
+                self.true_subject_val_dict[t] = true_subject_dict_val
+                self.true_object_val_dict[t] = true_object_dict_val
+                self.true_subject_test_dict[t] = true_subject_dict_test
+                self.true_object_test_dict[t] = true_object_dict_test
+
+            with open(true_subject_val_path, 'wb') as fp:
+                pickle.dump(self.true_subject_val_dict, fp)
+            with open(true_object_val_path, 'wb') as fp:
+                pickle.dump(self.true_object_val_dict, fp)
+            with open(true_subject_test_path, 'wb') as fp:
+                pickle.dump(self.true_subject_test_dict, fp)
+            with open(true_object_test_path, 'wb') as fp:
+                pickle.dump(self.true_object_test_dict, fp)
+    '''
+
+    def get_true_subject_and_object_global(self):
+        true_subject_path = os.path.join(self.args.dataset, "true_subjects.db")
+        true_object_path = os.path.join(self.args.dataset, "true_objects.db")
+        true_subject_val_path = os.path.join(self.args.dataset, "true_subjects_val.db")
+        true_object_val_path = os.path.join(self.args.dataset, "true_objects_val.db")
+        true_subject_test_path = os.path.join(self.args.dataset, "true_subjects_test.db")
+        true_object_test_path = os.path.join(self.args.dataset, "true_objects_test.db")
+
+        if os.path.exists(os.path.join(self.args.dataset, "true_subjects.db.dat")) and \
+            os.path.exists(os.path.join(self.args.dataset, "true_objects.db.dat")) and \
+            os.path.exists(os.path.join(self.args.dataset, "true_subjects_val.db.dat")) and \
+            os.path.exists(os.path.join(self.args.dataset, "true_objects_val.db.dat")) and \
+            os.path.exists(os.path.join(self.args.dataset, "true_subjects_test.db.dat")) and \
+            os.path.exists(os.path.join(self.args.dataset, "true_objects_test.db.dat")):
+
+            print("loading the evaluation shelve")
+            self.true_subject_global_dict = shelve.open(true_subject_path)
+            self.true_object_global_dict = shelve.open(true_object_path)
+            self.true_subject_val_dict = shelve.open(true_subject_val_path)
+            self.true_object_val_dict = shelve.open(true_object_val_path)
+            self.true_subject_test_dict = shelve.open(true_subject_test_path)
+            self.true_object_test_dict = shelve.open(true_object_test_path)
+        else:
+            self.true_subject_global_dict = shelve.open(true_subject_path)
+            self.true_object_global_dict = shelve.open(true_object_path)
+            self.true_subject_val_dict = shelve.open(true_subject_val_path)
+            self.true_object_val_dict = shelve.open(true_object_val_path)
+            self.true_subject_test_dict = shelve.open(true_subject_test_path)
+            self.true_object_test_dict = shelve.open(true_object_test_path)
+
+            print("computing the evaluation shelve")
+            for t in self.model.total_time:
+                quads = torch.cat([self.model.time2quads_train[t], self.model.time2quads_val[t], self.model.time2quads_test[t]])
+                val_quads = self.model.time2quads_val[t]
+                test_quads = self.model.time2quads_test[t]
+                true_subject_dict, true_object_dict = get_true_subject_and_object_per_graph(quads[:, :3])
+                true_subject_dict_val, true_object_dict_val = get_true_subject_and_object_per_graph(val_quads[:, :3])
+                true_subject_dict_test, true_object_dict_test = get_true_subject_and_object_per_graph(test_quads[:, :3])
+
+                write_to_shelve(self.true_subject_global_dict, true_subject_dict, t)
+                write_to_shelve(self.true_object_global_dict, true_object_dict, t)
+                write_to_shelve(self.true_subject_val_dict, true_subject_dict_val, t)
+                write_to_shelve(self.true_object_val_dict, true_object_dict_val, t)
+                write_to_shelve(self.true_subject_test_dict, true_subject_dict_test, t)
+                write_to_shelve(self.true_object_test_dict, true_object_dict_test, t)
 
     def calc_relative_rank(self, quadruples, known_entities, global2known_func, test_set):
         true_subject_dict = self.true_subject_val_dict if not test_set else self.true_subject_test_dict
@@ -74,32 +163,48 @@ class EvaluationFilterGlobal:
             prev_true_object = []
             prev_true_subject = []
 
+            s_r_key = "{}+{}+{}".format(t, s, r)
+            o_r_key = "{}+{}+{}".format(t, o, r)
             for prev_t in range(max(0, t - self.args.eval_seq_len), t):
-                if (s, r) in self.true_object_global_dict[prev_t]:
-                    prev_true_object += self.true_object_global_dict[prev_t][(s, r)].tolist()
-                if (r, o) in self.true_subject_global_dict[prev_t]:
-                    prev_true_subject += self.true_subject_global_dict[prev_t][(r, o)].tolist()
+                prev_s_r_key = "{}+{}+{}".format(prev_t, s, r)
+                prev_o_r_key = "{}+{}+{}".format(prev_t, o, r)
+
+                if prev_s_r_key in self.true_object_global_dict.keys():
+                    prev_true_object += self.true_object_global_dict[prev_s_r_key].tolist()
+
+                if prev_o_r_key in self.true_subject_global_dict.keys():
+                    prev_true_subject += self.true_subject_global_dict["{}+{}+{}".format(prev_t, o, r)].tolist()
+                # if s in self.true_object_global_dict[s_prev_t] and r in self.true_object_global_dict[s_prev_t][s]:
+                # if o in self.true_subject_global_dict[s_prev_t] and r in self.true_subject_global_dict[s_prev_t][o]:
 
             # true subject or true object: global -> known
             if (s, r) not in subject_relation_dict:
                 subject_relation_dict[(s, r)] = 0
-                cur_true_object_idx = global2known_func(true_object_dict[t][(s, r)])
-                all_cur_true_object_idx = global2known_func(self.true_object_global_dict[t][(s, r)])
+                cur_true_object_idx = global2known_func(true_object_dict[s_r_key])
+                all_cur_true_object_idx = global2known_func(self.true_object_global_dict[s_r_key])
                 cur_object_rank = object_rank[i].unsqueeze(0).cpu()
-                positive_object_rank = torch.nonzero(cur_object_rank.expand(len(cur_true_object_idx), rank_length) == torch.tensor(cur_true_object_idx).view(-1, 1))[:, 1]
+                positive_object_rank = torch.nonzero(
+                    cur_object_rank.expand(len(cur_true_object_idx), rank_length) == torch.tensor(
+                        cur_true_object_idx).view(-1, 1))[:, 1]
                 raw_ranks.append(positive_object_rank)
-                self.calc_relative_rank_per_query_type(first_positive_ranks, relative_ranks, deleted_facts_ranks, both_positive_ranks, prev_true_object,
-                                              positive_object_rank, cur_true_object_idx, cur_object_rank, all_cur_true_object_idx, rank_length, global2known_func)
+                self.calc_relative_rank_per_query_type(first_positive_ranks, relative_ranks, deleted_facts_ranks,
+                                                       both_positive_ranks, prev_true_object,
+                                                       positive_object_rank, cur_true_object_idx, cur_object_rank,
+                                                       all_cur_true_object_idx, rank_length, global2known_func)
 
             if (o, r) not in object_relation_dict:
                 object_relation_dict[(o, r)] = 0
-                cur_true_subject_idx = global2known_func(true_subject_dict[t][(r, o)])
-                all_cur_true_subject_idx = global2known_func(self.true_subject_global_dict[t][(r, o)])
+                cur_true_subject_idx = global2known_func(true_subject_dict[o_r_key])
+                all_cur_true_subject_idx = global2known_func(self.true_subject_global_dict[o_r_key])
                 cur_subject_rank = subject_rank[i].unsqueeze(0).cpu()
-                positive_subject_rank = torch.nonzero(cur_subject_rank.expand(len(cur_true_subject_idx), rank_length) == torch.tensor(cur_true_subject_idx).view(-1, 1))[:, 1]
+                positive_subject_rank = torch.nonzero(
+                    cur_subject_rank.expand(len(cur_true_subject_idx), rank_length) == torch.tensor(
+                        cur_true_subject_idx).view(-1, 1))[:, 1]
                 raw_ranks.append(positive_subject_rank)
-                self.calc_relative_rank_per_query_type(first_positive_ranks, relative_ranks, deleted_facts_ranks, both_positive_ranks, prev_true_subject,
-                                              positive_subject_rank, cur_true_subject_idx, cur_subject_rank, all_cur_true_subject_idx, rank_length, global2known_func)
+                self.calc_relative_rank_per_query_type(first_positive_ranks, relative_ranks, deleted_facts_ranks,
+                                                       both_positive_ranks, prev_true_subject,
+                                                       positive_subject_rank, cur_true_subject_idx, cur_subject_rank,
+                                                       all_cur_true_subject_idx, rank_length, global2known_func)
 
         raw_ranks_tensor = 1 + torch.cat(raw_ranks) if len(raw_ranks) > 0 else torch.tensor([]).long()
         first_positive_ranks_tensor = 1 + torch.cat(first_positive_ranks) if len(first_positive_ranks) > 0 else torch.tensor([]).long()
@@ -107,7 +212,6 @@ class EvaluationFilterGlobal:
         deleted_facts_ranks_tensor = 1 + torch.cat(deleted_facts_ranks) if len(deleted_facts_ranks) > 0 else torch.tensor([]).long()
         relative_ranks_tensor = torch.cat(relative_ranks) if len(relative_ranks) > 0 else torch.tensor([]).float()
         # pdb.set_trace()
-
         return raw_ranks_tensor, first_positive_ranks_tensor, both_positive_ranks_tensor, relative_ranks_tensor, deleted_facts_ranks_tensor
 
     def calc_relative_rank_per_query_type(self, first_positive_ranks, relative_ranks, deleted_facts_ranks, both_positive_ranks, prev_true_entity,
@@ -157,8 +261,9 @@ class EvaluationFilterGlobal:
         relation_tensor = quadruples[:, 1]
         object_tensor = quadruples[:, 2]
         time_tensor = quadruples[:, 3]
-
+        #TODO: delete cpu()
         relation_embedding = self.model.get_rel_embeds(relation_tensor, time_tensor)
+        ## debug:
         entity_length = len(known_entities)
         o_mask = self.mask_eval_set(quadruples, global2known_func, entity_length, calc_mask, mode="tail")
         s_mask = self.mask_eval_set(quadruples, global2known_func, entity_length, calc_mask, mode="head")
@@ -184,13 +289,12 @@ class EvaluationFilterGlobal:
             s, r, o, t = s.item(), r.item(), o.item(), t.item()
             # true subject or true object: local -> global -> known
             if mode == 'tail':
-                tails = self.true_object_global_dict[t][(s, r)]
+                tails = self.true_object_global_dict["{}+{}+{}".format(t, s, r)]
                 tail_idx = global2known_func(tails)
                 mask[i][tail_idx] = 1
                 mask[i][global2known_func(o)] = 0
-
             elif mode == 'head':
-                heads = self.true_subject_global_dict[t][(r, o)]
+                heads = self.true_subject_global_dict["{}+{}+{}".format(t, o, r)]
                 head_idx = global2known_func(heads)
                 mask[i][head_idx] = 1
                 mask[i][global2known_func(s)] = 0
@@ -201,11 +305,13 @@ class EvaluationFilterGlobal:
                              known_entities, mask, global2known_func, mode ='tail'):
         """ Perturb one element in the triplets
         """
-
         cur_target = torch.tensor(global2known_func(target.cpu()))
 
-        if self.args.use_cuda:
+        if self.args.use_cuda and 'wikidata' not in self.args.dataset:
             cur_target = cuda(cur_target, self.args.n_gpu)
+
+        if 'wikidata' in self.args.dataset:
+            mask = mask.cpu()
 
         unmasked_score = self.get_unmasked_score(anchor_entities, relation_embedding, time_tensor, known_entities, mode)
         masked_score = torch.where(mask, -10e6 * unmasked_score.new_ones(unmasked_score.shape), unmasked_score)
@@ -215,17 +321,19 @@ class EvaluationFilterGlobal:
         return sort_and_rank(score, cur_target)
 
     def get_unmasked_score(self, anchor_entities, relation_embedding, time_tensor, known_entities, mode ='tail'):
+        # TODO: delete cpu
         anchor_embedding = self.model.get_ent_embeds_train_global(
                     anchor_entities, time_tensor)
         neg_entity_embeddings = self.model.get_ent_embeds_train_global(
                     known_entities, time_tensor, mode='neg')
 
+        if 'wikidata' in self.args.dataset:
+            anchor_embedding = anchor_embedding.cpu()
+            relation_embedding = relation_embedding.cpu()
         if mode == 'tail':
             subject_embedding = anchor_embedding
             object_embedding = neg_entity_embeddings
-
         else:
             subject_embedding = neg_entity_embeddings
             object_embedding = anchor_embedding
-
         return self.calc_score(subject_embedding, relation_embedding, object_embedding, mode=mode)

@@ -1,7 +1,7 @@
 import pickle
 import os
 import numpy as np
-
+from collections import defaultdict
 
 class metric_collection:
     def __init__(self, args, base_path):
@@ -37,10 +37,14 @@ class metric_collection:
                     'num_epoch': {},
                     'training_data_size':{}
                 }
-
+        if args.plot_gradient:
+            self.metrics['gradient_cosine'] = defaultdict(list)
         self.base_path = base_path
         self.start_time = args.start_time_step
         self.diff_time_eval_results = np.zeros((length, length, 4))
+
+    def update_gradient_similarity(self, time, similarity):
+        self.metrics['gradient_cosine'][time].append(similarity)
 
     def update_deleted_facts_ranks(self, time, mrr, hit_1, hit_3, hit_10):
         self.metrics['deleted_facts_hits_10'][time] = hit_10

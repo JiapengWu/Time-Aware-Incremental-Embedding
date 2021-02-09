@@ -1,12 +1,11 @@
 from models.TKG_Module_Global import TKG_Module_Global
-import time
 import torch
-from utils.util_functions import cuda, mse_loss
+from utils.util_functions import cuda, mse_loss, store_grad, overwrite_grad
 import torch.nn.functional as F
 import time
 import numpy as np
-import pdb
 import math
+import pdb
 
 
 class TKG_Embedding_Global(TKG_Module_Global):
@@ -135,8 +134,40 @@ class TKG_Embedding_Global(TKG_Module_Global):
         self.batch_start_time = time.time()
         return self.learn_training_edges(quadruples, neg_subject_samples, neg_object_samples, labels)
 
-    def forward(self, quadruples_dict):
+    '''
+    def backward(self, trainer, loss, optimizer, optimizer_idx):
+        loss.backward()
+        if self.args.a_gem:
+            store_grad(self.named_parameters, self.grads)
+            dotp = torch.sum(self.ref_grads * self.grads)
+            # if self.args.plot_gradient:
+            #     self.metrics_collector.update_gradient_similarity(self.time,
+            #       dotp / (torch.norm(self.ref_grads, p=2) * torch.norm(self.grads, p=2)))
+            #     pdb.set_trace()
+            if dotp < 0:
+                g_ref_square = torch.sum(self.ref_grads * self.ref_grads)
+                g_projected = self.grads - (dotp / g_ref_square) * self.ref_grads
+                overwrite_grad(self.named_parameters, g_projected)
+                # store_grad_new(self.named_parameters, self.grads)
+    '''
 
+    def backward(self, trainer, loss, optimizer, optimizer_idx):
+        loss.backward()
+        if self.args.a_gem and self.time > 0:
+            store_grad(self.named_parameters, self.grads)
+            g_projected = {}
+
+            for k in self.grads:
+                dot_p = torch.sum(self.ref_grads[k] * self.grads[k], -1)
+                dot_p = torch.where(dot_p < 0, dot_p, self.zero_matrix[:dot_p.shape[0]])
+                factor = dot_p / torch.sum(self.ref_grads[k] * self.ref_grads[k], -1)
+                # 0 / 0 -> inf; n / 0 -> nan
+                factor = torch.where(torch.logical_or(torch.isinf(factor), torch.isnan(factor)),
+                                     self.zero_matrix[:factor.shape[0]], factor)
+                g_projected[k] = self.grads[k] - factor.unsqueeze(-1) * self.ref_grads[k]
+            overwrite_grad(self.named_parameters, g_projected)
+
+    def forward(self, quadruples_dict):
         # insert timer
         loss = 0
 
@@ -145,13 +176,13 @@ class TKG_Embedding_Global(TKG_Module_Global):
             neg_object_samples, neg_subject_samples, labels = \
                 self.corrupter.negative_sampling(train_quadruples.cpu(), self.args.negative_rate)
 
-        if self.reservoir_sampling and self.sample_neg_entity:
+        if self.reservoir_sampling and self.sample_neg_entity and self.time > 0:
             reservoir_samples = quadruples_dict['reservoir']
             pos_time_tensor = reservoir_samples[:, -1]
 
             self.neg_reservoir_object_samples, self.neg_reservoir_subject_samples, self.reservoir_labels \
                 = self.corrupter.negative_sampling(reservoir_samples.cpu(),
-                                                   self.args.negative_rate_reservoir, use_fixed_known_entities=False)
+                    self.args.negative_rate_reservoir, use_fixed_known_entities=False)
 
             self.cur_neg_subject_embeddings = self.get_ent_embeds_train_global(
                 self.neg_reservoir_subject_samples, pos_time_tensor, mode='double-neg')
@@ -166,20 +197,38 @@ class TKG_Embedding_Global(TKG_Module_Global):
 
         if self.use_cuda:
             torch.cuda.synchronize()
+
         self.batch_start_time = time.time()
+        if self.args.a_gem and self.time > 0:
 
-        if 'train' in quadruples_dict:
-            loss += self.learn_training_edges(train_quadruples, neg_subject_samples, neg_object_samples, labels)
+            res_loss = self.calc_quad_kd_loss(quadruples_dict['reservoir'])
+            # if self.deletion and 'prev true' in quadruples_dict:
+            #     res_loss += self.learn_prev_true_edges(quadruples_dict['prev true'])
+            res_loss.backward()
+            store_grad(self.named_parameters, self.ref_grads)
+            self.zero_grad()
 
-        if self.deletion and 'deleted' in quadruples_dict:
-            loss += self.unlearn_deleted_edges(quadruples_dict['deleted'])
+            if 'train' in quadruples_dict:
+                loss = self.learn_training_edges(train_quadruples, neg_subject_samples, neg_object_samples, labels)
 
-        if self.self_kd:
-            loss += self.self_kd_factor * self.calc_self_kd_loss()
+            if self.deletion and 'deleted' in quadruples_dict:
+                loss += self.unlearn_deleted_edges(quadruples_dict['deleted'])
 
-        if self.reservoir_sampling:
-            loss += self.calc_quad_kd_loss(quadruples_dict['reservoir'])
+            if self.self_kd and self.time > 0:
+                loss += self.self_kd_factor * self.calc_self_kd_loss()
 
+        else:
+            if 'train' in quadruples_dict:
+                loss += self.learn_training_edges(train_quadruples, neg_subject_samples, neg_object_samples, labels)
+
+            if self.deletion and 'deleted' in quadruples_dict:
+                loss += self.unlearn_deleted_edges(quadruples_dict['deleted'])
+
+            if self.self_kd and self.time > 0:
+                loss += self.self_kd_factor * self.calc_self_kd_loss()
+
+            if self.reservoir_sampling and 'reservoir' in quadruples_dict:
+                loss += self.calc_quad_kd_loss(quadruples_dict['reservoir'])
         return loss
 
     def calc_quad_kd_loss(self, reservoir_samples):
@@ -249,25 +298,23 @@ class TKG_Embedding_Global(TKG_Module_Global):
                                                corrupt_tail=False)
         return loss_tail + loss_head
 
+    def learn_prev_true_edges(self, prev_true_quads):
+        subjects, relations, objects, prev_time_tensor = [prev_true_quads[:, i] for i in range(4)]
+
+        subject_embeddings = self.get_ent_embeds_train_global(subjects, prev_time_tensor)
+        object_embeddings = self.get_ent_embeds_train_global(objects, prev_time_tensor)
+        relation_embeddings = self.get_rel_embeds(relations, prev_time_tensor)
+
+        score = self.calc_score(subject_embeddings, relation_embeddings, object_embeddings)
+        labels = cuda(torch.ones(len(prev_true_quads)), self.n_gpu) if self.use_cuda else torch.ones(len(prev_true_quads))
+        return self.args.up_weight_factor * F.binary_cross_entropy_with_logits(score, labels)
+
     def unlearn_deleted_edges(self, deleted_quadruples):
         subjects, relations, objects, cur_time_tensor = [deleted_quadruples[:, i] for i in range(4)]
-        # subjects, relations, objects, cur_time_tensor, prev_time_tensor = [deleted_quadruples[:, i] for i in range(5)]
-
         cur_subject_embeddings = self.get_ent_embeds_train_global(subjects, cur_time_tensor)
         cur_object_embeddings = self.get_ent_embeds_train_global(objects, cur_time_tensor)
         cur_relation_embeddings = self.get_rel_embeds(relations, cur_time_tensor)
 
-        # prev_subject_embeddings = self.get_ent_embeds_train_global(subjects, prev_time_tensor)
-        # prev_object_embeddings = self.get_ent_embeds_train_global(objects, prev_time_tensor)
-        # prev_relation_embeddings = self.get_rel_embeds(relations, prev_time_tensor)
-        #
-        # relation_embedding = torch.cat([cur_relation_embeddings, prev_relation_embeddings])
-        # subject_embeddings = torch.cat([cur_subject_embeddings, prev_subject_embeddings])
-        # object_embeddings = torch.cat([cur_object_embeddings, prev_object_embeddings])
-
-        # score = self.calc_score(subject_embeddings, relation_embedding, object_embeddings)
-        # labels = torch.cat([torch.zeros(len(deleted_quadruples)), torch.ones(len(deleted_quadruples))])
-        # labels = cuda(labels, self.n_gpu) if self.use_cuda else labels
         score = self.calc_score(cur_subject_embeddings, cur_relation_embeddings, cur_object_embeddings)
         labels = cuda(torch.zeros(len(deleted_quadruples)), self.n_gpu) if self.use_cuda else torch.zeros(len(deleted_quadruples))
         return self.args.up_weight_factor * F.binary_cross_entropy_with_logits(score, labels)
@@ -292,7 +339,6 @@ class TKG_Embedding_Global(TKG_Module_Global):
     def entity_kd(self, cur_pos_subject_embeddings, cur_pos_relation_embeddings, cur_pos_object_embeddings,
                          last_pos_relation_embeddings, last_pos_subject_embeddings, last_pos_object_embeddings,
                          cur_neg_subject_embeddings, cur_neg_object_embeddings, last_neg_subject_embeddings, last_neg_object_embeddings):
-
         last_neg_sub_triple_score = self.calc_score(last_neg_subject_embeddings, last_pos_relation_embeddings, last_pos_object_embeddings, mode='head')
         cur_neg_sub_triple_score = self.calc_score(cur_neg_subject_embeddings, cur_pos_relation_embeddings, cur_pos_object_embeddings, mode='head')
 

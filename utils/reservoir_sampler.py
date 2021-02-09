@@ -12,6 +12,8 @@ from utils.dataset import load_quadruples_tensor, id2entrel, get_total_number
 from utils.util_functions import plot_frequency_stats, count_frequency_value_lst, analyze_top_samples, print_per_step_top_patterns
 import matplotlib.pyplot as plt
 from collections import Counter
+import os
+import pickle
 
 
 def calc_aggregated_statistics(stats_per_time_agg, items, stats_per_time, target_time, cur_time):
@@ -72,8 +74,17 @@ class ReservoirSampler:
         _, num_rels, _ = get_total_number(args.dataset, 'stat.txt')
         self.id2ent, self.id2rel = id2entrel(args.dataset, num_rels)
         if self.frequency_sampling or self.inverse_frequency_sampling:
-            self.count_frequency()
-            self.pre_calc_sample_rate()
+            sample_rate_file = os.path.join(self.args.dataset, "{}frequency_sample_rate.pt".format(
+                "" if self.frequency_sampling else "inverse_"))
+            if os.path.exists(sample_rate_file):
+                with open(sample_rate_file, "rb") as f:
+                    self.sample_rate_cache = pickle.load(f)
+            else:
+                self.count_frequency()
+                self.pre_calc_sample_rate()
+
+                with open(sample_rate_file, 'wb') as fp:
+                    pickle.dump(self.sample_rate_cache, fp)
 
     def sample(self, time):
         all_hist_quads = torch.cat([self.time2quads_train[cur_time] for cur_time in
@@ -95,6 +106,7 @@ class ReservoirSampler:
         analyze_top_samples(self, time, all_hist_quads, 1000, self.id2ent, self.id2rel)
 
     def pre_calc_sample_rate(self, print_details=False, plot_details=False):
+
         self.sample_rate_cache = defaultdict(list)
 
         for target_time in range(self.start_time_step, self.end_time_step):
@@ -116,6 +128,37 @@ class ReservoirSampler:
             cur_target_obj_freq = self.obj_freq_per_time_step[target_time]
 
             drop_rate_lst = self.sample_rate_cache[target_time]
+
+            for cur_time in range(max(0, target_time - self.train_seq_len), target_time):
+                cur_quads = self.time2quads_train[cur_time]
+                if print_details:
+                    for s, r, o, t in cur_quads:
+                        s, r, o, t = s.item(), r.item(), o.item(), t.item()
+                        print("{}\t{}\t{}\t{}".format(self.id2ent[s], self.id2rel[r], self.id2ent[o], t))
+                        print("{:5} {:5} {:5} {:5} {:5} {:5}".format(hist_target_triple_freq[(s, r, o)],
+                                                                           hist_target_ent_pair_freq[(s, o)],
+                                                                           hist_target_sub_rel_freq[(s, r)],
+                                                                           hist_target_rel_obj_freq[(r, o)],
+                                                                           hist_target_sub_freq[s],
+                                                                           hist_target_obj_freq[o]))
+                    pdb.set_trace()
+
+                for s, r, o, t in cur_quads:
+                    s, r, o = s.item(), r.item(), o.item()
+
+                    rate = 1 + self.lambda_triple * np.log(1 + hist_target_triple_freq[(s, r, o)]) \
+                             + self.lambda_triple * self.discounted_multiplier * np.log(1 + cur_target_triple_freq[(s, r, o)]) \
+                             + self.lambda_ent_pair * np.log(1 + hist_target_ent_pair_freq[(s, o)]) \
+                             + self.lambda_ent_pair * self.discounted_multiplier * np.log(1 + cur_target_ent_pair_freq[(s, o)]) \
+                             + self.lambda_ent_rel * (np.log(1 + hist_target_sub_rel_freq[(s, r)]) + np.log(1 + hist_target_rel_obj_freq[(r, o)])) \
+                             + self.lambda_ent_rel * self.discounted_multiplier * (np.log(1 + cur_target_sub_rel_freq[(s, r)]) + np.log(1 + cur_target_rel_obj_freq[(r, o)])) \
+                             + self.lambda_ent * (np.log(1 + hist_target_sub_freq[s]) + np.log(1 + hist_target_obj_freq[o])) + \
+                             + self.lambda_ent * self.discounted_multiplier * (np.log(1 + cur_target_sub_freq[s]) + np.log(1 + cur_target_obj_freq[o]))
+
+                    if self.inverse_frequency_sampling:
+                        rate = 1 / rate
+                    rate *= np.exp((cur_time - target_time) / self.sigma)
+                    drop_rate_lst.append(rate)
 
             if plot_details:
 
@@ -180,36 +223,7 @@ class ReservoirSampler:
                                                                  hist_target_obj_freq[o]))
                 pdb.set_trace()
 
-            for cur_time in range(max(0, target_time - self.train_seq_len), target_time):
-                cur_quads = self.time2quads_train[cur_time]
-                if print_details:
-                    for s, r, o, t in cur_quads:
-                        s, r, o, t = s.item(), r.item(), o.item(), t.item()
-                        print("{}\t{}\t{}\t{}".format(self.id2ent[s], self.id2rel[r], self.id2ent[o], t))
-                        print("{:5} {:5} {:5} {:5} {:5} {:5}".format(hist_target_triple_freq[(s, r, o)],
-                                                                           hist_target_ent_pair_freq[(s, o)],
-                                                                           hist_target_sub_rel_freq[(s, r)],
-                                                                           hist_target_rel_obj_freq[(r, o)],
-                                                                           hist_target_sub_freq[s],
-                                                                           hist_target_obj_freq[o]))
-                    pdb.set_trace()
 
-                for s, r, o, t in cur_quads:
-                    s, r, o = s.item(), r.item(), o.item()
-
-                    rate = 1 + self.lambda_triple * np.log(1 + hist_target_triple_freq[(s, r, o)]) \
-                             + self.lambda_triple * self.discounted_multiplier * np.log(1 + cur_target_triple_freq[(s, r, o)]) \
-                             + self.lambda_ent_pair * np.log(1 + hist_target_ent_pair_freq[(s, o)]) \
-                             + self.lambda_ent_pair * self.discounted_multiplier * np.log(1 + cur_target_ent_pair_freq[(s, o)]) \
-                             + self.lambda_ent_rel * (np.log(1 + hist_target_sub_rel_freq[(s, r)]) + np.log(1 + hist_target_rel_obj_freq[(r, o)])) \
-                             + self.lambda_ent_rel * self.discounted_multiplier * (np.log(1 + cur_target_sub_rel_freq[(s, r)]) + np.log(1 + cur_target_rel_obj_freq[(r, o)])) \
-                             + self.lambda_ent * (np.log(1 + hist_target_sub_freq[s]) + np.log(1 + hist_target_obj_freq[o])) + \
-                             + self.lambda_ent * self.discounted_multiplier * (np.log(1 + cur_target_sub_freq[s]) + np.log(1 + cur_target_obj_freq[o]))
-
-                    if self.inverse_frequency_sampling:
-                        rate = 1 / rate
-                    rate *= np.exp((cur_time - target_time) / self.sigma)
-                    drop_rate_lst.append(rate)
 
     def count_frequency(self):
         self.triple_freq_per_time_step, self.ent_pair_freq_per_time_step, self.sub_freq_per_time_step, self.obj_freq_per_time_step, \
@@ -257,15 +271,14 @@ class DeletedEdgeReservoir:
 
     def sample_deleted_edges_train(self, time):
         fill_latest_currence_time_step(self.time2quads_train, self.training_reservoir, time)
-        train_reservoir_quads = get_prev_triples(self.training_reservoir, time, self.train_seq_len)
-        num_reservoir_quads = len(train_reservoir_quads)
+        cur_negative_quads, prev_positive_quads = get_prev_triples(self.training_reservoir, time, self.train_seq_len)
+        num_reservoir_quads = len(cur_negative_quads)
         idx = np.random.choice(num_reservoir_quads, min(self.deleted_edge_sample_size, num_reservoir_quads), replace=False)
-        return torch.from_numpy(train_reservoir_quads[idx])
+        return torch.from_numpy(cur_negative_quads[idx]), torch.from_numpy(prev_positive_quads[idx])
 
     # def get_deleted_edges_val(self, time):
     #     fill_latest_currence_time_step(self.time2quads_val, self.val_reservoir, time)
     #     val_reservoir_quads = get_prev_triples(self.val_reservoir, time, self.train_seq_len, train=False)
-    #     # pdb.set_trace()
     #     return torch.from_numpy(val_reservoir_quads)
 
 

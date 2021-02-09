@@ -11,8 +11,8 @@ class DiachronicEmbedding(TKG_Embedding_Global):
     def __init__(self, args, num_ents, num_rels):
         super(DiachronicEmbedding, self).__init__(args, num_ents, num_rels)
         if self.reservoir_sampling or self.self_kd:
-            self.old_w_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.temporal_embed_size), requires_grad=False)
-            self.old_b_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.temporal_embed_size), requires_grad=False)
+            self.old_w_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.temporal_embed_size).fill_(0), requires_grad=False)
+            self.old_b_temp_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.temporal_embed_size).fill_(0), requires_grad=False)
 
     def load_old_parameters(self):
         super(DiachronicEmbedding, self).load_old_parameters()
@@ -65,9 +65,13 @@ class DiachronicEmbedding(TKG_Embedding_Global):
 
     def precompute_entity_time_embed(self):
         time_tensor = torch.tensor(list(range(len(self.total_time)))).unsqueeze(0).unsqueeze(2)
-        if self.use_cuda:
-            time_tensor = cuda(time_tensor, self.n_gpu)
-        self.temp_ent_embeds_all_times = torch.sin(time_tensor * self.w_temp_ent_embeds.unsqueeze(1)
+        if 'wikidata' in self.args.dataset:
+            self.temp_ent_embeds_all_times = torch.sin(time_tensor * self.w_temp_ent_embeds.unsqueeze(1).cpu()
+                                                                + self.b_temp_ent_embeds.unsqueeze(1).cpu())
+        else:
+            if self.use_cuda:
+                time_tensor = cuda(time_tensor, self.n_gpu)
+            self.temp_ent_embeds_all_times = torch.sin(time_tensor * self.w_temp_ent_embeds.unsqueeze(1)
                                                                 + self.b_temp_ent_embeds.unsqueeze(1))
 
     def get_ent_embeds_train_global(self, entities, time_tensor, mode='pos'):
@@ -78,7 +82,10 @@ class DiachronicEmbedding(TKG_Embedding_Global):
             return torch.cat([static_ent_embeds[:, :self.static_embed_size],
                               static_ent_embeds[:, self.static_embed_size:] * temp_ent_embeds], dim=-1)
         elif mode == 'neg':
-            static_ent_embeds = static_ent_embeds.unsqueeze(1)
+            if 'wikidata' in self.args.dataset:
+                static_ent_embeds = static_ent_embeds.unsqueeze(1).cpu()
+            else:
+                static_ent_embeds = static_ent_embeds.unsqueeze(1)
             temp_ent_embeds = self.temp_ent_embeds_all_times[entities][:, time_tensor]
             return torch.cat([static_ent_embeds[:, :, :self.static_embed_size].expand(len(entities), len(time_tensor), self.static_embed_size),
                               static_ent_embeds[:, :, self.static_embed_size:] * temp_ent_embeds], dim=-1).transpose(0, 1)

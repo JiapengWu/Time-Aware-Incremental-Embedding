@@ -211,12 +211,27 @@ def load_quadruples_interpolation(dataset_path, train_fname, valid_fname, test_f
 
 
 def load_quadruples_tensor(dataset_path, train_fname, valid_fname, test_fname):
+    train_dict_path = os.path.join(dataset_path, "train.pt")
+    valid_dict_path = os.path.join(dataset_path, "valid.pt")
+    test_dict_path = os.path.join(dataset_path, "test.pt")
+    # print("wikidata" in dataset_path)
+
+    if os.path.exists(train_dict_path) and os.path.exists(valid_dict_path) and os.path.exists(test_dict_path):
+        with open(train_dict_path, "rb") as f:
+            sorted_time2quads_train = pickle.load(f)
+        with open(valid_dict_path, "rb") as f:
+            sorted_time2quads_valid = pickle.load(f)
+        with open(test_dict_path, "rb") as f:
+            sorted_time2quads_test = pickle.load(f)
+        return sorted_time2quads_train, sorted_time2quads_valid, sorted_time2quads_test
+
     time2quads_train = defaultdict(list)
     time2quads_val = defaultdict(list)
     time2quads_test = defaultdict(list)
     for fname, time2quads in zip([train_fname, valid_fname, test_fname],
                            [time2quads_train, time2quads_val, time2quads_test]):
         with open(os.path.join(dataset_path, fname), 'r') as fr:
+            # pdb.set_trace()
             for line in fr:
                 line_split = line.split()
                 head = int(line_split[0])
@@ -227,8 +242,23 @@ def load_quadruples_tensor(dataset_path, train_fname, valid_fname, test_fname):
     # pdb.set_trace()
     for time2quads in time2quads_train, time2quads_val, time2quads_test:
         for t in time2quads.keys():
-            time2quads[t] = torch.tensor(list(set(time2quads[t])))
-    return sort_dict(time2quads_train), sort_dict(time2quads_val), sort_dict(time2quads_test)
+            if "wikidata" in dataset_path:
+                time2quads[t] = torch.tensor(time2quads[t])
+            else:
+                time2quads[t] = torch.tensor(list(set(time2quads[t])))
+
+    sorted_time2quads_train = sort_dict(time2quads_train)
+    sorted_time2quads_valid = sort_dict(time2quads_val)
+    sorted_time2quads_test = sort_dict(time2quads_test)
+
+    for time2quads, path in zip(
+            [sorted_time2quads_train, sorted_time2quads_valid, sorted_time2quads_test],
+            [train_dict_path, valid_dict_path, test_dict_path]
+    ):
+        with open(path, 'wb') as fp:
+            pickle.dump(time2quads, fp)
+
+    return sorted_time2quads_train, sorted_time2quads_valid, sorted_time2quads_test
 
 
 def get_per_entity_time_sequence(time2triples):
@@ -319,13 +349,14 @@ def fill_latest_currence_time_step(time2quads, reservoir, t):
 
 
 def get_prev_triples(reservoir, t, train_seq_len, train=True):
-    train_reservoir_quads = []
+    cur_negative_quads = []
+    prev_positive_quads = []
     for (s, r, o), t_prev in reservoir.items():
         if t - t_prev <= train_seq_len and t != t_prev:
             # cur_lst = [s, r, o, t, t_prev]
-            cur_lst = [s, r, o, t]
-            train_reservoir_quads.append(cur_lst)
-    return np.array(train_reservoir_quads)
+            prev_positive_quads.append([s, r, o, t_prev])
+            cur_negative_quads.append([s, r, o, t])
+    return np.array(cur_negative_quads), np.array(prev_positive_quads)
 
 
 def init_data_loader(dataset, batch_size, should_shuffle):
@@ -348,11 +379,12 @@ def dataloader_wrapper(dataset_dict, original_batch_size, shuffle=True):
     for key, dataset in dataset_dict.items():
         batch_size = math.ceil(len(dataset) / num_batch)
         # print(len(dataset), batch_size, math.ceil(len(dataset) / batch_size))
-        dataloader_dict[key] = DataLoader(
-            dataset=dataset,
-            batch_size=batch_size,
-            shuffle=shuffle,
-        )
+        if len(dataset) > 0:
+            dataloader_dict[key] = DataLoader(
+                dataset=dataset,
+                batch_size=batch_size,
+                shuffle=shuffle,
+            )
     return DataLoaderWrapper(dataloader_dict)
 
 

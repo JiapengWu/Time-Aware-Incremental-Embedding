@@ -10,6 +10,7 @@ import pdb
 from collections import Counter
 import matplotlib.pyplot as plt
 from scipy.stats import describe
+from collections import defaultdict
 
 
 def build_sampled_graph_from_triples(triples, train_graph):
@@ -88,29 +89,53 @@ def get_add_del_graph(graph_dict_train):
             deleted_edges_dict[time] = deleted_edges_global
 
         last_edges_global_id = cur_edges_global
-        # last_edges_local_id = cur_edges_local_id
-        # last_graph = g
+
     return appended_graphs, deleted_edges_dict
 
 
-def get_add_del_graph_global(time2quads_train):
-    added_edges_dict = {}
-    deleted_edges_dict = {}
+def write_to_shelve(target_shelve, cur_dict, time):
+    for e in cur_dict:
+        for r in cur_dict[e]:
+            target_shelve["{}+{}+{}".format(time, e, r)] = cur_dict[e][r]
+'''
+def write_to_shelve(target_shelve, cur_dict):
+    for k, v in cur_dict.items():
+        target_shelve[k] = v
+'''
 
-    last_edge_set = None
-    for time, quads in time2quads_train.items():
-        # pdb.set_trace()
-        cur_edge_set = set([(s.item(), r.item(), o.item()) for s, r, o, t in quads])
-        if type(last_edge_set) == type(None):
-            added_edges_dict[time] = quads
-            deleted_edges_dict[time] = None
-        else:
-            added_idx, deleted_idx = cur_edge_set - last_edge_set, last_edge_set - cur_edge_set
-            # pdb.set_trace()
-            added_edges_dict[time] = torch.tensor([list(elem) + [time] for elem in added_idx])
-            deleted_edges_dict[time] = torch.tensor([list(elem) + [time] for elem in deleted_idx])
+def write_to_default_dict(target_dict, cur_dict, time):
+    for e in cur_dict:
+        for r in cur_dict[e]:
+            target_dict["{}+{}".format(e, r)][time] = cur_dict[e][r]
 
-        last_edge_set = cur_edge_set
+
+def get_add_del_graph_global(args, time2quads_train):
+    added_edges_dict_path = os.path.join(args.dataset, "added_edges_dict.db")
+    deleted_edges_dict_path = os.path.join(args.dataset, "deleted_edges_dict.db")
+
+    if os.path.exists(os.path.join(args.dataset, "added_edges_dict.db.dat")) and \
+            os.path.exists(os.path.join(args.dataset, "deleted_edges_dict.db.dat")):
+
+        added_edges_dict = shelve.open(added_edges_dict_path)
+        deleted_edges_dict = shelve.open(deleted_edges_dict_path)
+    else:
+        added_edges_dict = shelve.open(added_edges_dict_path)
+        deleted_edges_dict = shelve.open(deleted_edges_dict_path)
+        last_edge_set = None
+        for time, quads in time2quads_train.items():
+            time_s = str(time)
+            cur_edge_set = set([(s.item(), r.item(), o.item()) for s, r, o, t in quads])
+
+            if type(last_edge_set) == type(None):
+                added_edges_dict[time_s] = quads
+                deleted_edges_dict[time_s] = None
+            else:
+                added_idx, deleted_idx = cur_edge_set - last_edge_set, last_edge_set - cur_edge_set
+                added_edges_dict[time_s] = torch.tensor([list(elem) + [time] for elem in added_idx])
+                deleted_edges_dict[time_s] = torch.tensor([list(elem) + [time] for elem in deleted_idx])
+
+            last_edge_set = cur_edge_set
+
     return added_edges_dict, deleted_edges_dict
 
 
@@ -215,7 +240,6 @@ def move_dgl_to_cuda(g, device):
 
 
 def cuda(tensor, device):
-    # pdb.set_trace()
     torch.device(device[0])
     if tensor.device == torch.device('cpu'):
         return tensor.cuda(device[0])
@@ -236,25 +260,23 @@ def node_norm_to_edge_norm(g, node_norm):
 
 
 def get_true_subject_and_object_per_graph(triples):
-    true_head = {}
-    true_tail = {}
+    true_head = defaultdict(lambda: defaultdict(list))
+    true_tail = defaultdict(lambda: defaultdict(list))
     for head, relation, tail in triples:
         head, relation, tail = head.item(), relation.item(), tail.item()
-        if (head, relation) not in true_tail:
-            true_tail[(head, relation)] = []
-        true_tail[(head, relation)].append(tail)
-
-        if (relation, tail) not in true_head:
-            true_head[(relation, tail)] = []
-        true_head[(relation, tail)].append(head)
+        true_tail[head][relation].append(tail)
+        true_head[tail][relation].append(head)
 
     # this is correct
-    for relation, tail in true_head:
-        true_head[(relation, tail)] = np.array(list(set(true_head[(relation, tail)])))
-    for head, relation in true_tail:
-        true_tail[(head, relation)] = np.array(list(set(true_tail[(head, relation)])))
+    for head in true_tail:
+        for relation in true_tail[head]:
+            true_tail[head][relation] = np.array(true_tail[head][relation])
 
-    return true_head, true_tail
+    for tail in true_head:
+        for relation in true_head[tail]:
+            true_head[tail][relation] = np.array(true_head[tail][relation])
+
+    return dict(true_head), dict(true_tail)
 
 
 class MyTestTubeLogger(TestTubeLogger):
@@ -313,23 +335,67 @@ def get_known_relations_per_time_step(graph_dict_train, num_rels):
     return all_known_relations
 
 
-def get_known_entities_relations_per_time_step_global(time2quads_train,
+def get_known_entities_relations_per_time_step_global(args, time2quads_train,
                     time2quads_val, time2quads_test, num_ents, num_rels):
-    all_known_entities = {}
-    all_known_relations = {}
 
-    occurred_entity_positive_mask = np.zeros(num_ents)
-    occurred_relation_positive_mask = np.zeros(num_rels)
-    for t in time2quads_train.keys():
-        for quads in time2quads_train[t], time2quads_val[t], time2quads_test[t]:
-            for quad in quads:
-                occurred_entity_positive_mask[quad[0]] = 1
-                occurred_entity_positive_mask[quad[2]] = 1
-                occurred_relation_positive_mask[quad[1]] = 1
-        all_known_entities[t] = occurred_entity_positive_mask.nonzero()[0]
-        all_known_relations[t] = occurred_relation_positive_mask.nonzero()[0]
+    all_known_entities_path = os.path.join(args.dataset, "all_known_entities.pt")
+    all_known_relations_path = os.path.join(args.dataset, "all_known_relations.pt")
+    if os.path.exists(all_known_entities_path) and os.path.exists(all_known_relations_path):
+        with open(all_known_entities_path, "rb") as f:
+            all_known_entities = pickle.load(f)
+        with open(all_known_relations_path, "rb") as f:
+            all_known_relations = pickle.load(f)
+    else:
+
+        all_known_entities = {}
+        all_known_relations = {}
+
+        occurred_entity_positive_mask = np.zeros(num_ents)
+        occurred_relation_positive_mask = np.zeros(num_rels)
+        for t in time2quads_train.keys():
+            for quads in time2quads_train[t], time2quads_val[t], time2quads_test[t]:
+                for quad in quads:
+                    occurred_entity_positive_mask[quad[0]] = 1
+                    occurred_entity_positive_mask[quad[2]] = 1
+                    occurred_relation_positive_mask[quad[1]] = 1
+            all_known_entities[t] = occurred_entity_positive_mask.nonzero()[0]
+            all_known_relations[t] = occurred_relation_positive_mask.nonzero()[0]
+
+        with open(all_known_entities_path, 'wb') as fp:
+            pickle.dump(all_known_entities, fp)
+        with open(all_known_relations_path, 'wb') as fp:
+            pickle.dump(all_known_relations, fp)
     return all_known_entities, all_known_relations
 
+'''
+def get_known_entities_relations_per_time_step_global(args, time2quads_train,
+                    time2quads_val, time2quads_test, num_ents, num_rels):
+
+    all_known_entities_path = os.path.join(args.dataset, "all_known_entities.db")
+    all_known_relations_path = os.path.join(args.dataset, "all_known_relations.db")
+
+    print("Beginning to load known entities and relations")
+    all_known_entities = shelve.open(all_known_entities_path)
+    all_known_relations = shelve.open(all_known_relations_path)
+
+    if os.path.exists(os.path.join(args.dataset, "all_known_entities.db.bak")) and \
+        os.path.exists(os.path.join(args.dataset, "all_known_relations.db.bak")):
+        pass
+    else:
+        occurred_entity_positive_mask = np.zeros(num_ents)
+        occurred_relation_positive_mask = np.zeros(num_rels)
+        for t in time2quads_train.keys():
+            for quads in time2quads_train[t], time2quads_val[t], time2quads_test[t]:
+                for quad in quads:
+                    occurred_entity_positive_mask[quad[0]] = 1
+                    occurred_entity_positive_mask[quad[2]] = 1
+                    occurred_relation_positive_mask[quad[1]] = 1
+            all_known_entities[t] = occurred_entity_positive_mask.nonzero()[0]
+            all_known_relations[t] = occurred_relation_positive_mask.nonzero()[0]
+
+    print("Finished loading known entities and relations")
+    return all_known_entities, all_known_relations
+'''
 
 def plot_frequency_stats(target_triple_freq_lst, target_ent_pair_freq_lst, target_sub_rel_freq_lst,
                          target_rel_obj_freq_lst, target_sub_freq_lst, target_obj_freq_lst, all_time=False, historical=True):
@@ -398,6 +464,42 @@ def count_frequency_value_lst(quads, target_triple_freq, target_ent_pair_freq, t
     return target_triple_freq_lst, target_ent_pair_freq_lst, target_sub_rel_freq_lst, \
            target_rel_obj_freq_lst, target_sub_freq_lst, target_obj_freq_lst
 
+'''
+def store_grad(named_p, grads, grad_dims):
+    grads[:].fill_(0.0)
+    cnt = 0
+    for name, param in named_p():
+        if 'old' not in name and param.grad is not None:
+            beg = 0 if cnt == 0 else sum(grad_dims[:cnt])
+            en = sum(grad_dims[:cnt + 1])
+            grads[beg: en].copy_(param.grad.data.view(-1))
+        cnt += 1
+
+
+def overwrite_grad(named_parameters, newgrad, grad_dims):
+    cnt = 0
+    for name, param in named_parameters():
+        if 'old' not in name and param.grad is not None:
+            beg = 0 if cnt == 0 else sum(grad_dims[:cnt])
+            en = sum(grad_dims[:cnt + 1])
+            this_grad = newgrad[beg: en].contiguous().view(param.grad.data.size())
+            param.grad.data.copy_(this_grad)
+        cnt += 1
+'''
+
+def store_grad(named_parameters, grads):
+    for name, param in named_parameters():
+        if 'old' not in name and param.grad is not None:
+            grads[name].copy_(param.grad.data)
+
+
+def overwrite_grad(named_parameters, newgrad):
+    for name, param in named_parameters():
+        if 'old' not in name and param.grad is not None:
+            param.grad.data.copy_(newgrad[name])
+        # if param.grad is not None and torch.isinf(param.grad.data).nonzero().shape[0] > 0 or \
+        #         torch.isnan(param.grad.data).nonzero().shape[0] > 0:
+        #     pdb.set_trace()
 
 def analyze_top_samples(reservoir_sampler, time, all_hist_quads, sample_size, id2ent, id2rel):
     hist_target_triple_freq = reservoir_sampler.triple_freq_per_time_step_agg[time]
@@ -583,7 +685,35 @@ def print_per_step_top_patterns(reservoir_sampler, time, all_hist_quads, sample_
     print_dict(Counter(relation_lst).most_common(30))
     print()
 
+
 def print_dict(inp_lst):
     for pattern, freq in inp_lst:
         print("{}\t{}".format(pattern, freq))
     print()
+
+
+import pickle
+import shelve
+
+def convert_dict_to_shelve():
+    dataset = 'yago'
+    files = ['true_objects_train', 'true_subjects_train', 'true_objects_val', 'true_subjects_val',
+             'true_objects', 'true_subjects', 'true_objects_test', 'true_subjects_test']
+    for file in files:
+        file = os.path.join('/home/jiapeng/Incremental-TKG/interpolation', dataset, file)
+        print(file)
+        with open("{}.pt".format(file), "rb") as f:
+            cur_dict = pickle.load(f)
+
+        s = shelve.open('{}.db'.format(file))
+        for t in cur_dict:
+            try:
+                s[str(t)] = cur_dict[t]
+            except:
+                s.close()
+                break
+        s.close()
+
+
+if __name__ == '__main__':
+    convert_dict_to_shelve()

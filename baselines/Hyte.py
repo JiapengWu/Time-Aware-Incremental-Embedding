@@ -10,8 +10,7 @@ class Hyte(TKG_Embedding_Global):
         args.score_function = 'transE'
         super(Hyte, self).__init__(args, num_ents, num_rels)
         if self.reservoir_sampling or self.self_kd:
-            self.old_time_embeddings = nn.Parameter(torch.Tensor(len(self.total_time), self.embed_size))
-        # self.calc_score = transE
+            self.old_time_embeddings = nn.Parameter(torch.Tensor(len(self.total_time), self.embed_size).fill_(0))
 
     def build_model(self):
         self.time_embeddings = nn.Parameter(torch.Tensor(len(self.total_time), self.embed_size))
@@ -39,10 +38,14 @@ class Hyte(TKG_Embedding_Global):
         self.time_embeddings.data.copy_(self.time_embeddings / torch.norm(self.time_embeddings, p=2, dim=1).unsqueeze(1))
 
     def precompute_entity_time_embed(self):
-        static_ent_embeds = self.ent_embeds.unsqueeze(1)
-        # self.weight_normalization()
+
         time_tensor = torch.tensor(list(range(len(self.total_time))))
-        time_embeddings = self.time_embeddings[time_tensor].unsqueeze(0)
+        if 'wikidata' in self.args.dataset:
+            static_ent_embeds = self.ent_embeds.unsqueeze(1).cpu()
+            time_embeddings = self.time_embeddings[time_tensor].unsqueeze(0).cpu()
+        else:
+            static_ent_embeds = self.ent_embeds.unsqueeze(1)
+            time_embeddings = self.time_embeddings[time_tensor].unsqueeze(0)
         # n_ent, embed_size - (1, embed_size * n_ent, 1)
         self.temp_ent_embeds_all_times = static_ent_embeds - time_embeddings * (torch.sum(static_ent_embeds * time_embeddings, dim=-1)).unsqueeze(-1)
 
@@ -59,12 +62,9 @@ class Hyte(TKG_Embedding_Global):
                 static_rel_embedding * time_embeddings, dim=-1)).unsqueeze(1)
 
     def get_ent_embeds_train_global(self, entities, time_tensor, mode='pos'):
-        # ones = static_ent_embeds.new_ones(entities.shape[0], self.static_embed_size)
-
         static_ent_embeds = self.ent_embeds[entities]
         self.weight_normalization()
         if mode == 'pos':
-
             time_embeddings = self.time_embeddings[time_tensor]
             return static_ent_embeds - time_embeddings * (torch.sum(static_ent_embeds * time_embeddings, dim=-1)).unsqueeze(1)
 
@@ -72,7 +72,6 @@ class Hyte(TKG_Embedding_Global):
             return self.temp_ent_embeds_all_times[entities][:, time_tensor].transpose(0, 1)
         else:
             time_embeddings = self.time_embeddings[time_tensor].unsqueeze(1)
-            # pdb.set_trace()
             return static_ent_embeds - time_embeddings * (torch.sum(static_ent_embeds * time_embeddings, dim=-1)).unsqueeze(-1)
 
     def get_ent_embeds_train_global_old(self, entities, time_tensor, mode='pos'):

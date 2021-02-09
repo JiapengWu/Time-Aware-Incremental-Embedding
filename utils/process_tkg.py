@@ -35,8 +35,6 @@ def create_year2id(triple_time):
     for year in year_list:
         freq[year] = freq[year] + 1
 
-    # pdb.set_trace()
-
     year_class = []
     count = 0
     for key in sorted(freq.keys()):
@@ -105,7 +103,7 @@ def write_processed_files(triples, triple_time, year2id, mode):
     with open(os.path.join(output_dir, "{}.txt".format(mode)), "w") as f:
         for triple_id, start_id, end_id in zip(inp_idx, start_idx, end_idx):
             triple = triples[triple_id]
-            if start_id < end_id:
+            if start_id <= end_id:
                 for t in range(start_id, end_id + 1):
                     # pdb.set_trace()
                     f.write("{}\t{}\t{}\t{}\n".format(triple[0], triple[1], triple[2], t))

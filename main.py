@@ -13,7 +13,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import torch
 import sys
 import glob
-import pdb
+
 
 if __name__ == '__main__':
     args = process_args()
@@ -34,8 +34,8 @@ if __name__ == '__main__':
     if use_cuda:
         torch.cuda.set_device(args.n_gpu[0])
 
-    name = "{}-{}-{}-patience-{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1],
-                                                             args.score_function, args.patience,
+    name = "{}-{}-{}-patience-{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}".format(args.module, args.dataset.split('/')[-1],
+                                                            args.score_function, args.patience,
                                         "-addition" if args.addition else "",
                                         "-deletion" if args.deletion else "",
                                         "-up-weight-factor-{}".format(args.up_weight_factor) if args.deletion else "",
@@ -48,7 +48,7 @@ if __name__ == '__main__':
                                         "-all-prev-time-steps" if args.all_prev_time_steps else ""
                                         "-KD" if args.KD_reservoir else "",
                                         "-CE" if args.CE_reservoir else "",
-                                        # "-reservoir" if args.KD_reservoir or args.CE_reservoir else "",
+                                        "-a-gem" if args.a_gem else "",
                                         "-historical-sampling" if args.historical_sampling else "",
                                         "-train-seq-len-{}".format(args.train_seq_len) if args.historical_sampling else "",
                                         "-num-samples-each-time-step-{}".format(args.num_samples_each_time_step) if args.historical_sampling else "",
@@ -60,6 +60,8 @@ if __name__ == '__main__':
                                         "-neg-rate-reservoir-{}".format(args.negative_rate_reservoir) if args.sample_neg_entity else "",
                                         "-frequency-sampling" if args.frequency_sampling else "",
                                         "-inverse-frequency-sampling" if args.inverse_frequency_sampling else "",
+                                        "-seed-{}".format(args.seed),
+                                        "{}".format("-end-time-step-{}".format(args.end_time_step) if not args.load_base_model else "")
                                     )
     # TODO: adjust the naming function
 
@@ -68,7 +70,10 @@ if __name__ == '__main__':
     log_file_err = "errs/log-{}-{}".format(name, version)
 
     myhost = os.uname()[1]
-    experiment_path = '.'
+    if myhost == 'gdl':
+        experiment_path = "/media/data/jiapeng-yishi/"
+    elif myhost == 'curie':
+        experiment_path = "/data/jwu558/"
 
     if not args.debug:
         sys.stdout = open(log_file_out, 'w')
@@ -88,7 +93,6 @@ if __name__ == '__main__':
     # graph_dict_train, graph_dict_val, graph_dict_test = build_interpolation_graphs(args)
 
     total_time = np.array(list(range(num_time_steps)))
-    # print(total_time)
     module = {
               "Static": Static,
               "DE": DiachronicEmbedding,
@@ -113,6 +117,7 @@ if __name__ == '__main__':
         base_model_path = glob.glob(os.path.join(args.base_model_path, "*.ckpt"))[0]
         base_model_checkpoint = torch.load(base_model_path, map_location=lambda storage, loc: storage)
         model.load_state_dict(base_model_checkpoint['state_dict'], strict=False)
+        # pdb.set_trace()
 
     for time in range(args.start_time_step, args.end_time_step):
         early_stop_callback = EarlyStopping(
@@ -142,8 +147,8 @@ if __name__ == '__main__':
                           early_stop_callback=early_stop_callback,
                           overfit_batches=1 if args.overfit else 0,
                           show_progress_bar=True,
-                          # print_nan_grads=True,
-                          terminate_on_nan=True,
+                          print_nan_grads=True,
+                          # terminate_on_nan=True,
                           checkpoint_callback=checkpoint_callback
                           )
 

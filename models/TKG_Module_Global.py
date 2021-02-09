@@ -18,8 +18,9 @@ import glob
 import torch
 import time
 from utils.reservoir_sampler import DeletedEdgeReservoir, ReservoirSampler
-import baselines
 from collections import defaultdict
+from utils.util_functions import cuda
+import pdb
 
 
 class TKG_Module_Global(LightningModule):
@@ -30,6 +31,7 @@ class TKG_Module_Global(LightningModule):
         self.time2quads_train, self.time2quads_val, self.time2quads_test = \
             load_quadruples_tensor(args.dataset, 'train.txt', 'valid.txt', 'test.txt')
         self.total_time = np.array(list(self.time2quads_train.keys()))
+        # self.num_rels = num_rels if self.args.a_gem else num_rels * 2
         self.num_rels = num_rels
         self.num_ents = num_ents
         self.embed_size = args.embed_size
@@ -44,7 +46,6 @@ class TKG_Module_Global(LightningModule):
 
         self.corrupter = CorruptTriplesGlobal(self)
         self.evaluater = EvaluationFilterGlobal(self)
-        # self.evaluater = EvaluationFilterGlobal(self) if not isinstance(self, baselines.ATiSE.ATiSE) else EvaluationFilterGlobalAtiSE(self)
 
         self.addition = args.addition
         self.deletion = args.deletion
@@ -56,12 +57,13 @@ class TKG_Module_Global(LightningModule):
 
         self.deleted_edges_reservoir = DeletedEdgeReservoir(args, self.time2quads_train)
         if self.addition:
-            self.added_edges_dict, _ = get_add_del_graph_global(self.time2quads_train)
+            self.added_edges_dict, _ = get_add_del_graph_global(args, self.time2quads_train)
+
         if self.addition and self.args.present_sampling:
             self.common_triples_dict = get_common_triples_adjacent_time_global(self.time2quads_train)
 
         self.ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size))
-        self.rel_embeds = nn.Parameter(torch.Tensor(self.num_rels * 2, self.embed_size))
+        self.rel_embeds = nn.Parameter(torch.Tensor(self.num_rels, self.embed_size))
         self.init_parameters()
 
         self.get_known_entities_relation_per_time_step()
@@ -73,12 +75,42 @@ class TKG_Module_Global(LightningModule):
         self.inverse_frequency_sampling = args.inverse_frequency_sampling
 
         if self.args.historical_sampling:
-
             self.reservoir_sampler = ReservoirSampler(args, self.time2quads_train)
 
         if self.reservoir_sampling or self.self_kd :
-            self.old_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size), requires_grad=False)
-            self.old_rel_embeds = nn.Parameter(torch.Tensor(self.num_rels * 2, self.embed_size), requires_grad=False)
+            self.old_ent_embeds = nn.Parameter(torch.Tensor(self.num_ents, self.embed_size).fill_(0), requires_grad=False)
+            self.old_rel_embeds = nn.Parameter(torch.Tensor(self.num_rels, self.embed_size).fill_(0), requires_grad=False)
+            # print(torch.isnan(self.old_rel_embeds).nonzero())
+
+        if self.args.a_gem:
+            self.init_gradient_repo()
+
+    def init_gradient_repo(self):
+        self.ref_grads = {}
+        self.grads = {}
+        self.zero_matrix = cuda(torch.zeros(self.num_ents), self.n_gpu)
+        for name, param in self.named_parameters():
+            if 'old' not in name:
+                self.ref_grads[name] = torch.Tensor(*param.data.shape)
+                self.grads[name] = torch.Tensor(*param.data.shape)
+                if self.use_cuda:
+                    self.ref_grads[name] = cuda(self.ref_grads[name], self.n_gpu)
+                    self.grads[name] = cuda(self.grads[name], self.n_gpu)
+
+    '''
+    def init_gradient_repo(self):
+        self.grad_dims = []
+
+        for name, param in self.named_parameters():
+            if 'old' not in name:
+                self.grad_dims.append(param.data.numel())
+
+        self.ref_grads = torch.Tensor(sum(self.grad_dims))
+        self.grads = torch.Tensor(sum(self.grad_dims))
+        if self.use_cuda:
+            self.ref_grads = cuda(self.ref_grads, self.n_gpu)
+            self.grads = cuda(self.grads, self.n_gpu)
+    '''
 
     def init_metrics_collection(self):
         self.accumulative_val_result = {"mrr": 0, "hit_1": 0, "hit_3": 0, "hit_10": 0, "all_ranks": None}
@@ -96,7 +128,6 @@ class TKG_Module_Global(LightningModule):
 
     def on_time_step_start(self, time):
         self.time = time
-        # self.train_graph = self.graph_dict_train[time]
         self.known_entities = self.all_known_entities[time]
         self.known_relations = self.all_known_relations[time]
         self.corrupter.set_known_entities()
@@ -125,16 +156,14 @@ class TKG_Module_Global(LightningModule):
         self.epoch_time = 0
 
     def on_epoch_end(self):
-        print(self.epoch_time)
+        # print(self.epoch_time)
         self.epoch_time_gauge.add(self.epoch_time)
-
-    # def on_batch_start(self, batch):
 
     def on_batch_end(self):
         if self.use_cuda:
             torch.cuda.synchronize()
         self.epoch_time += time.time() - self.batch_start_time
-        # print(time.time() - self.batch_start_time)
+
 
     def training_step(self, quadruples, batch_idx):
         forward_func = self.forward_global if self.args.all_prev_time_steps or self.args.train_base_model else self.forward
@@ -293,36 +322,35 @@ class TKG_Module_Global(LightningModule):
         return torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=0.0001)
 
     def should_skip_training(self):
-        return self.addition and len(self.added_edges_dict[self.time]) == 0 \
-               and not self.deletion and not self.reservoir_sampling
+        return self.addition and len(self.added_edges_dict[str(self.time)]) == 0 \
+               and not self.deletion and (not self.reservoir_sampling or self.args.a_gem)
 
     def _dataloader_train(self):
         # when using multi-node (ddp) we need to add the datasampler
         # TODO: reservoir sampling
         train_dataset_dict = {}
-        train_quads = self.added_edges_dict[self.time] if self.addition else self.time2quads_train[self.time]
+        train_quads = self.added_edges_dict[str(self.time)] if self.addition else self.time2quads_train[self.time]
         training_data_size = 0
         if len(train_quads) > 0:
             train_dataset_dict['train'] = TrainDataset(train_quads)
             training_data_size += len(train_quads) * self.negative_rate * 2
 
-        if self.deletion:
+        if self.deletion and self.time > 0:
             # and len(self.deleted_edges_dict[self.time]) > 0:
             # train_dataset_dict['deleted'] = TrainDataset(self.deleted_edges_dict[self.time])
             # we hope to get all deleted edges here
-            train_dataset_dict['deleted'] = self.deleted_edges_reservoir.sample_deleted_edges_train(self.time)
+            train_dataset_dict['deleted'], train_dataset_dict['prev true'] = self.deleted_edges_reservoir.sample_deleted_edges_train(self.time)
             training_data_size += len(train_dataset_dict['deleted'])
 
-        if self.reservoir_sampling:
+        if self.reservoir_sampling and self.time > 0:
             reservoir_quads = []
             if self.args.historical_sampling:
-
                 historical_quads = self.reservoir_sampler.sample(self.time)
                 reservoir_quads.append(historical_quads)
 
             if self.args.present_sampling:
-                involved_entities = torch.unique(torch.cat([self.added_edges_dict[self.time][:, 0],
-                                                    self.added_edges_dict[self.time][:, 2]])).tolist()
+                involved_entities = torch.unique(torch.cat([self.added_edges_dict[str(self.time)][:, 0],
+                                                    self.added_edges_dict[str(self.time)][:, 2]])).tolist()
                 present_quads = collect_one_hot_neighbors_global(self.common_triples_dict[self.time], involved_entities,
                                                                     self.args.one_hop_positive_sampling, self.args.train_batch_size)
                 reservoir_quads.append(present_quads)
@@ -383,5 +411,5 @@ class TKG_Module_Global(LightningModule):
 
     def get_known_entities_relation_per_time_step(self):
         self.all_known_entities, self.all_known_relations = \
-            get_known_entities_relations_per_time_step_global(self.time2quads_train,
+            get_known_entities_relations_per_time_step_global(self.args, self.time2quads_train,
                             self.time2quads_val, self.time2quads_test, self.num_ents, self.num_rels)
