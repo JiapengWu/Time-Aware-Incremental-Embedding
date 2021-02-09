@@ -114,7 +114,7 @@ def process_args():
         start_time_step_dict = {'wiki': 54, "yago": 42, "icews14": 292, 'gdelt': 292, 'wikidata': 1}
         myhost = os.uname()[1]
         if myhost == 'gdl':
-            args.base_model_path = "/media/data/jiapeng-yishi/experiments/base-model/{}-{}".format(args.module, dataset)
+            args.base_model_path = "/media/data/jwu558/experiments/base-model/{}-{}".format(args.module, dataset)
         elif myhost == 'curie':
             args.base_model_path = "/data/jwu558/experiments/base-model/{}-{}".format(args.module, dataset)
         args.start_time_step = start_time_step_dict[dataset]

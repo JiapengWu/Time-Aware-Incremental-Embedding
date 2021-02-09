@@ -69,6 +69,8 @@ python main.py --module DE -d wiki --n-gpu 0 --score-function complex --negative
    `--KD-reservoir`: use knowledge distillation loss for experience replay
     
    `--CE-reservoir`: use cross entropy loss for experience replay. To replicate the setting in our paper, set both flags.
+   
+   `--a-gem`: use A-GEM for training. Please use it together with `--CE-reservoir`.
     
    `--historical-sampling`: use experience replay. Set this flag if either `--KD-reservoir` or `--CE-reservoir` is set to True.
     

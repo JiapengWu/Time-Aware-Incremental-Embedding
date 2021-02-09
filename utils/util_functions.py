@@ -700,7 +700,7 @@ def convert_dict_to_shelve():
     files = ['true_objects_train', 'true_subjects_train', 'true_objects_val', 'true_subjects_val',
              'true_objects', 'true_subjects', 'true_objects_test', 'true_subjects_test']
     for file in files:
-        file = os.path.join('/home/jiapeng/Incremental-TKG/interpolation', dataset, file)
+        file = os.path.join('/home/jwu558/Incremental-TKG/interpolation', dataset, file)
         print(file)
         with open("{}.pt".format(file), "rb") as f:
             cur_dict = pickle.load(f)

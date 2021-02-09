@@ -190,6 +190,7 @@ class TKG_Module(LightningModule):
             'ranks': ranks,
             # 'test_loss': loss,
         })
+
         self.logger.experiment.log(log_output)
 
         return output

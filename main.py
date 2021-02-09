@@ -71,7 +71,7 @@ if __name__ == '__main__':
 
     myhost = os.uname()[1]
     if myhost == 'gdl':
-        experiment_path = "/media/data/jiapeng-yishi/"
+        experiment_path = "/media/data/jwu558/"
     elif myhost == 'curie':
         experiment_path = "/data/jwu558/"
 
