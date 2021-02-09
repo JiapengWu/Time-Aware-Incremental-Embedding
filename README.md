@@ -6,7 +6,7 @@ Installation:
 `conda install pytorch=1.5.1 torchvision cudatoolkit=10.1 -c pytorch && pip install dgl-cu101 `
  `&& python -m pip install -U matplotlib && pip install test-tube==0.7.5 && pip install pytorch-lightning==0.8.1`
 
-`conda install -c anaconda ipykernel && python -m ipykernel install --user --name=paulwu`
+`conda install -c anaconda ipykernel && python -m ipykernel install --user --name=$your_conda_env_name`
 
 
 
