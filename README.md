@@ -1,3 +1,5 @@
+This is the opensource implementation of the paper [TIE: A Framework for Embedding-based Incremental Temporal Knowledge Graph Completion](https://arxiv.org/pdf/2104.08419.pdf). 
+
 # Incremental Temporal Knowledge Graph Completion
 
 In this project, we explore different ways of training TKGC models with new edges and entities. The basic setting corresponds to training the model using on the edges at time step `t`. 
