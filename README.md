@@ -1,4 +1,4 @@
-This is the opensource implementation of the paper [TIE: A Framework for Embedding-based Incremental Temporal Knowledge Graph Completion](https://arxiv.org/pdf/2104.08419.pdf). 
+PyTorch implementation of paper [TIE: A Framework for Embedding-based Incremental Temporal Knowledge Graph Completion](https://arxiv.org/pdf/2104.08419.pdf) ([SIGIR 2021](https://sigir.org/sigir2021/)). 
 
 # Incremental Temporal Knowledge Graph Completion
 
